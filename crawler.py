@@ -1,35 +1,76 @@
-import requests, re, os
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+# crawler.py
 
-BASE_URL = "https://www.shabaton.online/"
-SAVE_DIR = "data/pages"
-os.makedirs(SAVE_DIR, exist_ok=True)
-visited = set()
 
 def clean_text(text):
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
+text = re.sub(r'\s+', ' ', text)
+return text.strip()
+
+
+
+
+def fetch(url):
+try:
+r = requests.get(url, timeout=10)
+r.raise_for_status()
+return r.text
+except Exception as e:
+print(f"fetch error {url}: {e}")
+return ""
+
+
+
+
+def extract_links(html, base):
+soup = BeautifulSoup(html, 'html.parser')
+links = set()
+for a in soup.find_all('a', href=True):
+href = a['href']
+full = urljoin(base, href)
+parsed = urlparse(full)
+if parsed.netloc == urlparse(BASE_URL).netloc:
+clean = full.split('#')[0].split('?')[0]
+links.add(clean)
+return links
+
+
+
+
+def text_from_html(html):
+soup = BeautifulSoup(html, 'html.parser')
+for s in soup(['script','style','noscript']):
+s.decompose()
+text = soup.get_text(separator='\n')
+text = re.sub(r'\n\s*\n+', '\n\n', text)
+text = re.sub(r'[ \t]+', ' ', text)
+return text.strip()
+
+
+
 
 def crawl(url):
-    if url in visited or not url.startswith(BASE_URL):
-        return
-    visited.add(url)
-    print("📄", url)
-    try:
-        res = requests.get(url, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-        text = clean_text(soup.get_text(separator=' '))
-        filename = urlparse(url).path.replace("/", "_") or "index"
-        with open(f"{SAVE_DIR}/{filename}.txt", "w", encoding="utf-8") as f:
-            f.write(text)
-        # חיפוש קישורים פנימיים
-        for link in soup.find_all("a", href=True):
-            next_url = urljoin(BASE_URL, link["href"])
-            if BASE_URL in next_url and "#" not in next_url:
-                crawl(next_url)
-    except Exception as e:
-        print("❌", e)
+to_visit = set([url])
+while to_visit:
+u = to_visit.pop()
+if u in visited:
+continue
+visited.add(u)
+print('Crawling', u)
+html = fetch(u)
+if not html:
+continue
+text = text_from_html(html)
+filename = urlparse(u).path.strip('/') or 'index'
+filename = filename.replace('/', '_')
+with open(os.path.join(SAVE_DIR, filename + '.txt'), 'w', encoding='utf-8') as f:
+f.write(text)
+links = extract_links(html, u)
+for l in links:
+if l not in visited:
+to_visit.add(l)
+time.sleep(0.1)
 
-if __name__ == "__main__":
-    crawl(BASE_URL)
+
+
+
+if __name__ == '__main__':
+crawl(BASE_URL)
