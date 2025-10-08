@@ -1,0 +1,64 @@
+<!-- הדביקי ב-Duda HTML widget -->
+<style>
+/* עיצוב תואם לשבתון (החליפי צבעים לפי הצורך) */
+#ai-fixed-chat { position: fixed; bottom: 16px; right: 16px; width: 360px; max-width: 92vw; z-index: 99999; font-family: Arial, sans-serif; }
+#ai-fixed-chat .card { background: #ffffff; border-radius: 12px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); overflow: hidden; border:1px solid #e6e6e6; }
+#ai-fixed-chat .header { background:#004b8d; color:#fff; padding:12px 14px; font-weight:600; }
+#ai-fixed-chat .msgs { max-height:380px; overflow:auto; padding:10px; direction:rtl; font-size:14px; }
+#ai-fixed-chat .input-row { display:flex; border-top:1px solid #eee; }
+#ai-fixed-chat input { flex:1; border:0; padding:10px; font-size:14px; direction:rtl; outline:none; }
+#ai-fixed-chat button { background:#004b8d; color:#fff; border:0; padding:10px 14px; cursor:pointer; }
+#ai-fixed-chat .msg { margin-bottom:8px; }
+#ai-fixed-chat .msg .who{ font-weight:700; margin-left:6px; }
+#ai-fixed-chat .source { font-size:12px; color:#666; margin-top:6px; }
+</style>
+
+
+<div id="ai-fixed-chat">
+<div class="card">
+<div class="header">🤖 סוכן AI — שאלות נפוצות</div>
+<div class="msgs" id="ai-msgs"></div>
+<div class="input-row">
+<input id="ai-input" placeholder="שאל/י שאלה..." />
+<button id="ai-send">שלח</button>
+</div>
+</div>
+</div>
+
+
+<script>
+const API_URL = "https://ai-shabaton.onrender.com/query"; // החליפי לכתובת השרת שלך אחרי פריסה
+const MSGS = document.getElementById('ai-msgs');
+document.getElementById('ai-send').onclick = send;
+document.getElementById('ai-input').addEventListener('keydown', (e)=>{ if(e.key==='Enter') send(); });
+
+
+function append(who, html){
+const el = document.createElement('div');
+el.className='msg';
+el.innerHTML = `<span class="who">${who}</span><div style="margin-top:4px;">${escapeHtml(html)}</div>`;
+MSGS.appendChild(el);
+MSGS.scrollTop = MSGS.scrollHeight;
+return el;
+}
+function escapeHtml(s){ return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
+
+async function send(){
+const inp = document.getElementById('ai-input');
+const q = inp.value.trim();
+if(!q) return;
+append('אתה', q);
+inp.value='';
+const loadingEl = append('סוכן', 'בודק תשובה, נא המתן...');
+try {
+const res = await fetch(API_URL, {
+method:'POST',
+headers:{ 'Content-Type':'application/json' },
+body: JSON.stringify({ query: q })
+});
+if(!res.ok) throw new Error('server error');
+const data = await res.json();
+let srcHtml = '';
+if(data.sources && data.sources.length){
+srcHtml
