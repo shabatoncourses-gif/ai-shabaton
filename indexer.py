@@ -1,28 +1,48 @@
-import os, openai, chromadb
+# indexer.py
+import os, openai
+from dotenv import load_dotenv
+import chromadb
+from chromadb.utils import embedding_functions
 
-openai.api_key = "YOUR_OPENAI_API_KEY"
-CHROMA_PATH = "data/index"
-os.makedirs(CHROMA_PATH, exist_ok=True)
-client = chromadb.Client(chromadb.config.Settings(persist_directory=CHROMA_PATH))
-collection = client.get_or_create_collection("shabaton")
 
-def embed_text(text):
-    response = openai.Embedding.create(
-        input=text,
-        model="text-embedding-3-small"
-    )
-    return response['data'][0]['embedding']
+load_dotenv()
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+CHROMA_DIR = os.getenv('CHROMA_DB_DIR', './data/index')
+EMBED_MODEL = os.getenv('EMBED_MODEL', 'text-embedding-3-small')
 
-for fname in os.listdir("data/pages"):
-    with open(f"data/pages/{fname}", "r", encoding="utf-8") as f:
-        text = f.read()
-    print("📘 מאנדקס:", fname)
-    emb = embed_text(text[:8000])
-    collection.add(
-        documents=[text],
-        embeddings=[emb],
-        ids=[fname]
-    )
+
+os.makedirs(CHROMA_DIR, exist_ok=True)
+
+
+client = chromadb.Client(chromadb.config.Settings(persist_directory=CHROMA_DIR))
+
+
+# use OpenAI embedding fn
+ef = embedding_functions.OpenAIEmbeddingFunction(api_key=OPENAI_API_KEY, model_name=EMBED_MODEL)
+
+
+# create or get collection
+try:
+collection = client.get_collection(name='shabaton_faq')
+except Exception:
+collection = client.create_collection(name='shabaton_faq', embedding_function=ef)
+
+
+# read pages
+pages_dir = 'data/pages'
+files = [f for f in os.listdir(pages_dir) if f.endswith('.txt')]
+for fname in files:
+path = os.path.join(pages_dir, fname)
+with open(path, 'r', encoding='utf-8') as f:
+text = f.read()
+# simple chunking
+max_chars = int(os.getenv('MAX_CHUNK_TOKENS', '800')) * 4
+chunks = [text[i:i+max_chars] for i in range(0, len(text), max_chars) if len(text[i:i+max_chars].strip())>50]
+ids = [f"{fname}#chunk{i}" for i in range(len(chunks))]
+metas = [{"source": f"https://www.shabaton.online/{fname.replace('_','.').replace('.txt','')}"} for _ in chunks]
+if chunks:
+collection.add(documents=chunks, metadatas=metas, ids=ids)
+
 
 client.persist()
-print("✅ אינדוקס הושלם.")
+print('Indexing done')
