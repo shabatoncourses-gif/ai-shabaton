@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: ai-shabaton
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: "pip install -r requirements.txt && python crawler.py && python indexer.py"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
