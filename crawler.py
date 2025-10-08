@@ -79,6 +79,8 @@ def crawl(url):
         filename = filename.replace('/', '_')
         filepath = os.path.join(SAVE_DIR, f"{filename}.txt")
 
-        try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.w
+try:
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(text)
+    print(f"    ↳ Saved: {filepath}")
+
