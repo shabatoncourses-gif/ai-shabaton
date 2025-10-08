@@ -1,11 +1,23 @@
 services:
-- type: web
-name: ai-shabaton
-env: python
-region: frankfurt
-plan: free
-buildCommand: "pip install -r requirements.txt && python crawler.py && python indexer.py"
-startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
-envVars:
-- key: OPENAI_API_KEY
-sync: false
+  - type: web
+    name: shabaton-faq-backend
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
+    plan: free
+    region: frankfurt  # או כל אזור שמתאים לך
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false  # כדי שלא יהיה חשוף בקוד, תגדירי את הערך רק בממשק של Render פעם אחת
+      - key: CHROMA_DB_DIR
+        value: ./data/index
+      - key: EMBED_MODEL
+        value: text-embedding-3-small
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+      - key: TOP_K
+        value: "4"
+      - key: BACKEND_ORIGIN
+        value: "*"
+      - key: MAX_CHUNK_TOKENS
+        value: "800"
