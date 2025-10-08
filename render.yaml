@@ -2,15 +2,18 @@ services:
   - type: web
     name: shabaton-faq-backend
     env: python
+    region: frankfurt  # אפשר לשנות למשל ל: oregon / singapore / frankfurt / virginia
+    plan: free
+
     buildCommand: "pip install -r requirements.txt"
     startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
-    plan: free
-    region: frankfurt  # או כל אזור שמתאים לך
+
+    # --- משתני סביבה ---
     envVars:
       - key: OPENAI_API_KEY
-        sync: false  # כדי שלא יהיה חשוף בקוד, תגדירי את הערך רק בממשק של Render פעם אחת
+        sync: false  # לא שומר את הערך בגיט — מוסיפים ידנית בממשק Render
       - key: CHROMA_DB_DIR
-        value: ./data/index
+        value: /opt/render/project/src/data/index
       - key: EMBED_MODEL
         value: text-embedding-3-small
       - key: LLM_MODEL
@@ -21,3 +24,9 @@ services:
         value: "*"
       - key: MAX_CHUNK_TOKENS
         value: "800"
+
+    # --- דיסק קבוע לשמירת הנתונים של ChromaDB ---
+    disk:
+      name: chroma-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1  # אפשר להגדיל אם יש הרבה קבצים (מקסימום חינם זה 1GB בתוכנית free)
