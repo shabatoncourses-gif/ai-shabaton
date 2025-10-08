@@ -36,8 +36,11 @@ except Exception:
     collection = client.create_collection(name="shabaton_faq", embedding_function=ef)
 
 # --- אינדוקס קבצים ---
-pages_dir = "data/pages"
-files = [f for f in os.listdir(pages_dir) if f.endswith(".txt")]
+
+pages_dir = 'data/pages'
+os.makedirs(pages_dir, exist_ok=True)  
+
+files = [f for f in os.listdir(pages_dir) if f.endswith('.txt')]
 
 for fname in files:
     path = os.path.join(pages_dir, fname)
@@ -67,3 +70,4 @@ for fname in files:
 
 client.persist()
 print("✅ Indexing done successfully.")
+
