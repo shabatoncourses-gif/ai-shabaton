@@ -4,31 +4,37 @@ from dotenv import load_dotenv
 import chromadb
 from chromadb.utils import embedding_functions
 
-# טעינת משתני סביבה
+# --- טעינת משתני סביבה ---
 load_dotenv()
+
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 CHROMA_DIR = os.getenv('CHROMA_DB_DIR', './data/index')
 EMBED_MODEL = os.getenv('EMBED_MODEL', 'text-embedding-3-small')
 
-# יצירת תיקיית אינדקס אם לא קיימת
+# --- תיקון לשגיאת CHROMA_OPENAI_API_KEY ---
+# אם המשתנה לא קיים, נשתמש באותו מפתח של OPENAI_API_KEY
+if not os.getenv("CHROMA_OPENAI_API_KEY") and OPENAI_API_KEY:
+    os.environ["CHROMA_OPENAI_API_KEY"] = OPENAI_API_KEY
+
+# --- יצירת תיקיית אינדקס אם לא קיימת ---
 os.makedirs(CHROMA_DIR, exist_ok=True)
 
-# חיבור למסד הנתונים של Chroma
+# --- חיבור למסד הנתונים של Chroma ---
 client = chromadb.Client(chromadb.config.Settings(persist_directory=CHROMA_DIR))
 
-# שימוש בפונקציית embedding של OpenAI
+# --- שימוש בפונקציית embedding של OpenAI ---
 ef = embedding_functions.OpenAIEmbeddingFunction(
-    api_key=OPENAI_API_KEY,
+    api_key=os.getenv("CHROMA_OPENAI_API_KEY"),
     model_name=EMBED_MODEL
 )
 
-# יצירת collection אם לא קיים
+# --- יצירת או טעינת collection ---
 try:
     collection = client.get_collection(name='shabaton_faq')
 except Exception:
     collection = client.create_collection(name='shabaton_faq', embedding_function=ef)
 
-# קריאת דפים
+# --- קריאת קבצי טקסט ---
 pages_dir = 'data/pages'
 files = [f for f in os.listdir(pages_dir) if f.endswith('.txt')]
 
@@ -52,8 +58,12 @@ for fname in files:
     ]
 
     if chunks:
-        collection.add(documents=chunks, metadatas=metas, ids=ids)
+        try:
+            collection.add(documents=chunks, metadatas=metas, ids=ids)
+            print(f"[+] Indexed {fname} ({len(chunks)} chunks)")
+        except Exception as e:
+            print(f"[!] Failed to add {fname}: {e}")
 
-# שמירה
+# --- שמירה ---
 client.persist()
-print('Indexing done')
+print("✅ Indexing done successfully.")
