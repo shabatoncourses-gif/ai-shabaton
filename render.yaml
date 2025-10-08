@@ -24,9 +24,3 @@ services:
         value: "*"
       - key: MAX_CHUNK_TOKENS
         value: "800"
-
-    # --- דיסק קבוע לשמירת הנתונים של ChromaDB ---
-    disk:
-      name: chroma-data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 1  # אפשר להגדיל אם יש הרבה קבצים (מקסימום חינם זה 1GB בתוכנית free)
