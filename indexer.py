@@ -68,6 +68,7 @@ for fname in files:
         except Exception as e:
             print(f"[!] Failed to add {fname}: {e}")
 
-client.persist()
+
 print("✅ Indexing done successfully.")
+
 
