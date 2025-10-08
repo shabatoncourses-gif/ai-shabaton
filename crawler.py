@@ -79,8 +79,24 @@ def crawl(url):
         filename = filename.replace('/', '_')
         filepath = os.path.join(SAVE_DIR, f"{filename}.txt")
 
-try:
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(text)
-    print(f"    ↳ Saved: {filepath}")
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(text)
+            print(f"    ↳ Saved: {filepath}")
+        except Exception as e:
+            print(f"    [!] Save error: {e}")
 
+        # הוספת קישורים חדשים לרשימת הסריקה
+        links = extract_links(html, u)
+        for l in links:
+            if l not in visited:
+                to_visit.add(l)
+
+        # הפסקה קטנה כדי לא להעמיס על השרת
+        time.sleep(0.1)
+
+
+if __name__ == '__main__':
+    print(f"Starting crawl from {BASE_URL}")
+    crawl(BASE_URL)
+    print("Done.")
