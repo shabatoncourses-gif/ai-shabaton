@@ -31,8 +31,16 @@ services:
       echo "🔧 Running initial indexing..."
       python indexer.py > indexer_log.txt 2>&1 || echo "⚠️ indexer.py failed — continuing deploy."
       echo "📄 --- Indexer Summary ---"
-      grep -E "Indexed|complete|Skipped" indexer_log.txt || cat indexer_log.txt
+      grep -E "Indexed|complete|Skipped|files" indexer_log.txt || cat indexer_log.txt
       echo "📄 -----------------------"
+
+      # הדפסת תקציר אם נוצר
+      if [ -f data/index_summary.json ]; then
+        echo "🗂️ Indexed pages summary:"
+        cat data/index_summary.json
+      else
+        echo "⚠️ No index_summary.json found — skipping display."
+      fi
 
       echo "✅ Build completed successfully!"
 
@@ -60,8 +68,12 @@ services:
     env: python
     schedule: "0 3 * * *"  # כל יום בשעה 03:00
     region: frankfurt
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python indexer.py"
+    buildCommand: |
+      echo "⏰ Starting daily re-index..."
+      pip install -r requirements.txt
+      python indexer.py > daily_index_log.txt 2>&1 || echo "⚠️ Daily indexer failed."
+      echo "📄 Daily Indexer Summary:"
+      grep -E "Indexed|complete|files" daily_index_log.txt || cat daily_index_log.txt
     envVars:
       - key: OPENAI_API_KEY
         sync: false
