@@ -1,4 +1,5 @@
 import os
+import subprocess
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -45,7 +46,7 @@ os.makedirs(CHROMA_DIR, exist_ok=True)
 # --- אתחול לקוח Chroma ---
 client = chromadb.Client(chromadb.config.Settings(persist_directory=CHROMA_DIR))
 
-# --- בדיקה אם הקולקציה קיימת ---
+# --- טעינת קולקציה ---
 try:
     collection = client.get_collection("shabaton_faq")
     print("✅ Chroma collection 'shabaton_faq' loaded successfully.")
@@ -55,7 +56,7 @@ except Exception:
     print("✅ New collection 'shabaton_faq' created successfully.")
 
 # --- אתחול FastAPI ---
-app = FastAPI()
+app = FastAPI(title="AI Shabaton Backend")
 
 # --- CORS ---
 app.add_middleware(
@@ -70,12 +71,13 @@ app.add_middleware(
 class QueryIn(BaseModel):
     query: str
 
+
 # --- בניית פרומפט ---
 def build_prompt(question, contexts):
     header = (
         "אתה סוכן שירות רשמי עבור אתר Shabaton.online. "
-        "ענה בעברית בלבד, בסגנון מקצועי, מבוסס על המידע הנתון בלבד. "
-        "אם אין מידע — אמור שאין מידע זמין והפנה לעמוד יצירת קשר.\n\n"
+        "ענה בעברית בלבד, בסגנון מקצועי ומדויק, על סמך המידע הקיים בלבד. "
+        "אם אין מידע רלוונטי — אמור שאין מידע זמין והפנה לעמוד יצירת קשר.\n\n"
     )
     ctx_texts = []
     for i, c in enumerate(contexts):
@@ -83,14 +85,14 @@ def build_prompt(question, contexts):
         ctx_texts.append(s)
     return header + "\n\n".join(ctx_texts) + f"\n\nשאלה: {question}\n\nתשובה (בעברית):"
 
-# --- API: ביצוע שאילתה ---
+
+# --- שאילתת מידע ---
 @app.post("/query")
 async def query(q: QueryIn):
     qtext = q.query.strip()
     if not qtext:
         raise HTTPException(status_code=400, detail="Empty query")
 
-    # שליפת קטעים רלוונטיים מ-Chroma
     try:
         res = collection.query(
             query_texts=[qtext],
@@ -106,7 +108,6 @@ async def query(q: QueryIn):
 
     prompt = build_prompt(qtext, docs)
 
-    # קריאה ל-OpenAI
     try:
         completion = openai.ChatCompletion.create(
             model=LLM_MODEL,
@@ -124,7 +125,22 @@ async def query(q: QueryIn):
     sources = list({d["source"] for d in docs if d.get("source")})
     return {"status": "ok", "answer": answer, "sources": sources}
 
+
+# --- אינדוקס מחדש ---
+@app.post("/reindex")
+async def reindex():
+    """
+    מפעיל את indexer.py כדי לטעון מחדש את קבצי הטקסט בתיקייה data/pages.
+    """
+    try:
+        result = subprocess.run(["python", "indexer.py"], check=True, capture_output=True, text=True)
+        print(result.stdout)
+        return {"status": "ok", "message": "Reindex completed successfully!"}
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Reindex failed: {e.stderr}")
+
+
 # --- שורש לבדיקה ---
 @app.get("/")
 async def root():
-    return {"status": "ok", "message": "Shabaton FAQ API is running 🚀"}
+    return {"status": "ok", "message": "AI Shabaton FAQ backend is running 🚀"}
