@@ -147,15 +147,19 @@ for url in urls:
     ids = [f"{urlparse(url).path.strip('/') or 'index'}#chunk{i}" for i in range(len(chunks))]
     metas = [{"source": url} for _ in chunks]
 
-    try:
-        existing = collection.get(ids=ids)
-        if existing and existing["ids"]:
-            collection.delete(ids=existing["ids"])
-    except Exception:
-        pass
+    # נשמור תקציר
+    index_summary = {
+        "total_chunks": total_chunks,
+        "files": indexed_files
+    }
 
-    collection.add(documents=chunks, metadatas=metas, ids=ids)
-    cache[url] = text_hash
-    index_summary["pages"].append({"url": url, "chunks": len(chunks)})
+    os.makedirs(os.path.dirname(SUMMARY_PATH), exist_ok=True)
+    with open(SUMMARY_PATH, "w", encoding="utf-8") as f:
+        json.dump(index_summary, f, ensure_ascii=False, indent=2)
 
-index_summary["t]()_
+    print(f"✅ Indexing complete: {len(indexed_files)} files, {total_chunks} chunks total.")
+    print(f"📄 Summary saved to {SUMMARY_PATH}")
+
+
+if __name__ == "__main__":
+    build_index()
