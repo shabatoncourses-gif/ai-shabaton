@@ -12,13 +12,18 @@ load_dotenv()
 CHROMA_DIR = os.getenv("CHROMA_DB_DIR", "./data/index")
 SUMMARY_FILE = os.path.join("data", "index_summary.json")
 
-# --- יצירת אפליקציית FastAPI ---
-app = FastAPI(title="AI Shabaton API")
 
 # --- הגדרות CORS (גישה חופשית לדפדפן) ---
+
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(title="AI Shabaton API")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # או ["https://www.shabaton.online"] אם רוצים רק את האתר שלך
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -123,3 +128,4 @@ if os.path.exists(CHROMA_DIR):
         print(f"⚠️ Could not connect to Chroma: {e}")
 else:
     print(f"⚠️ Chroma directory {CHROMA_DIR} not found.")
+
