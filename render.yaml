@@ -5,51 +5,48 @@ services:
     region: frankfurt
     plan: free
 
+    # --- תהליך הבנייה ---
     buildCommand: |
       echo "🚀 Starting build process..."
       pip install -r requirements.txt
 
-      # עדכוני חבילות חשובים
-      pip install --upgrade openai
+      # תיקון תאימות בין Chroma ל־OpenAI SDK
+      pip install "openai<1.0.0" --force-reinstall
       pip install "chromadb>=0.5.3"
-      pip install beautifulsoup4 html5lib tqdm requests python-dotenv
+      pip install beautifulsoup4 requests
 
-      # יצירת תיקיות ברירת מחדל
-      mkdir -p data/pages data/index
+      # יצירת תיקיות בסיס
+      mkdir -p data/pages
+      mkdir -p data/index
 
-      # קבצי תוכן בסיסיים
-      if [ ! -f data/pages/about.txt ]; then
-        echo "עמוד אודות האתר שבתון. כאן תוכל למצוא מידע כללי על האתר והשירותים." > data/pages/about.txt
-      fi
-      if [ ! -f data/pages/faq.txt ]; then
-        echo "שאלות ותשובות נפוצות על אתר שבתון ושירותיו." > data/pages/faq.txt
-      fi
-      if [ ! -f data/pages/contact.txt ]; then
-        echo "צור קשר עם צוות שבתון דרך טופס באתר או במייל info@shabaton.online" > data/pages/contact.txt
-      fi
+      echo "✅ Directories prepared."
 
-      echo "✅ Created default data/pages files."
-
-      # --- שלב חדש: בניית אינדקס Chroma בכל Deploy ---
-      echo "🔧 Running indexer.py to rebuild ChromaDB index..."
+      # --- הרצת indexer.py (כולל אינדוקס מה-sitemap) ---
+      echo "🔧 Running indexer.py to build ChromaDB index from sitemaps..."
       python indexer.py > indexer_log.txt 2>&1 || echo "⚠️ indexer.py failed — continuing deploy."
 
-      echo "📄 --- Indexer Log Summary ---"
-      grep -E "Indexing|✅|done|Created|Loaded" indexer_log.txt || tail -n 40 indexer_log.txt
-      echo "📄 ----------------------------"
+      # --- הדפסת סיכום האינדוקס ---
+      echo "📄 --- Indexer Summary ---"
+      grep -E "Indexed|complete|Found|Summary" indexer_log.txt || cat indexer_log.txt
+      echo "📄 -----------------------"
+
+      # --- הצגת קובץ הסיכום החדש ---
+      if [ -f data/index_summary.json ]; then
+        echo "🗂️ Indexed pages summary:"
+        cat data/index_summary.json
+      else
+        echo "⚠️ No index_summary.json found — skipping display."
+      fi
 
       echo "✅ Build completed successfully!"
 
+    # --- פקודת ההפעלה ---
     startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
 
+    # --- משתני סביבה ---
     envVars:
       - key: OPENAI_API_KEY
-        sync: false
-      - key: CHROMA_OPENAI_API_KEY
-        fromService:
-          name: ai-shabaton-1
-          type: web
-        # או פשוט תגדיר אותו ידנית בממשק כמו OPENAI_API_KEY
+        sync: false  # יש להגדיר ידנית בממשק Render
       - key: CHROMA_DB_DIR
         value: /opt/render/project/src/data/index
       - key: EMBED_MODEL
@@ -62,3 +59,13 @@ services:
         value: "*"
       - key: MAX_CHUNK_TOKENS
         value: "800"
+
+# --- משימה מתוזמנת להרצת אינדוקס אוטומטי ---
+schedules:
+  - name: daily-index-refresh
+    type: cron
+    schedule: "0 2 * * *"  # מריץ כל יום בשעה 02:00 לפנות בוקר (שעון אירופה)
+    command: |
+      echo "⏰ Running scheduled daily index refresh..."
+      python indexer.py > /opt/render/project/src/data/scheduled_index_log.txt 2>&1
+      echo "✅ Scheduled index refresh complete!"
