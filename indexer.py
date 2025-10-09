@@ -4,40 +4,28 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 # --- טעינת משתני סביבה ---
-env_loaded = load_dotenv()
-if env_loaded:
-    print("✅ .env file loaded successfully.")
-else:
-    print("⚠️ .env file not found (this is normal on Render).")
+load_dotenv()
 
-# --- משתנים ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CHROMA_DIR = os.getenv("CHROMA_DB_DIR", "./data/index")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
-MAX_CHUNK_TOKENS = int(os.getenv("MAX_CHUNK_TOKENS", "800"))
 
-# --- בדיקה על המפתח ---
 if not OPENAI_API_KEY:
-    raise RuntimeError("❌ Missing OPENAI_API_KEY — add it in your Render environment variables.")
+    raise RuntimeError("❌ Missing OPENAI_API_KEY — add it in your .env file or in Render environment.")
 
-# --- יצירת תיקייה ל-ChromaDB ---
+# --- יצירת תיקייה למסד הנתונים אם לא קיימת ---
 os.makedirs(CHROMA_DIR, exist_ok=True)
 
-print("🔧 Configuration Summary:")
-print(f"  → CHROMA_DIR: {CHROMA_DIR}")
-print(f"  → EMBED_MODEL: {EMBED_MODEL}")
-print(f"  → MAX_CHUNK_TOKENS: {MAX_CHUNK_TOKENS}")
-
-# --- אתחול חיבור ל-Chroma ---
+# --- חיבור ל־ChromaDB ---
 client = chromadb.PersistentClient(path=CHROMA_DIR)
 
-# --- פונקציית Embedding ---
+# --- יצירת פונקציית Embedding ---
 ef = embedding_functions.OpenAIEmbeddingFunction(
     api_key=OPENAI_API_KEY,
     model_name=EMBED_MODEL,
 )
 
-# --- יצירת או טעינת קולקציה ---
+# --- טעינת או יצירת קולקציה ---
 try:
     collection = client.get_collection(name="shabaton_faq")
     print("✅ Loaded existing collection 'shabaton_faq'")
@@ -54,21 +42,19 @@ files = [f for f in os.listdir(pages_dir) if f.endswith(".txt")]
 if not files:
     print("⚠️ No .txt files found in data/pages — add content files before indexing.")
     exit(0)
-else:
-    print(f"📚 Found {len(files)} text files to index.\n")
+
+print(f"📚 Found {len(files)} text files to index.\n")
 
 # --- אינדוקס קבצים ---
+total_chunks = 0
+
 for fname in files:
     path = os.path.join(pages_dir, fname)
     with open(path, "r", encoding="utf-8") as f:
-        text = f.read().strip()
+        text = f.read()
 
-    if not text:
-        print(f"⚠️ Skipping empty file: {fname}")
-        continue
-
-    # חלוקה לקטעים
-    max_chars = MAX_CHUNK_TOKENS * 4
+    # חלוקה לקטעים (chunks)
+    max_chars = int(os.getenv("MAX_CHUNK_TOKENS", "800")) * 4
     chunks = [
         text[i:i + max_chars]
         for i in range(0, len(text), max_chars)
@@ -77,19 +63,20 @@ for fname in files:
 
     ids = [f"{fname}#chunk{i}" for i in range(len(chunks))]
     metas = [
-        {
-            "source": f"https://www.shabaton.online/{fname.replace('_', '.').replace('.txt', '')}"
-        }
+        {"source": f"https://www.shabaton.online/{fname.replace('_', '.').replace('.txt', '')}"}
         for _ in chunks
     ]
 
     if chunks:
         try:
             collection.add(documents=chunks, metadatas=metas, ids=ids)
+            total_chunks += len(chunks)
             print(f"[+] Indexed {fname} ({len(chunks)} chunks)")
         except Exception as e:
             print(f"[!] Failed to add {fname}: {e}")
-    else:
-        print(f"⚠️ No valid text chunks found in {fname}")
 
-print("\n✅ Indexing complete! Your data is ready for querying 🚀")
+# --- סיכום ---
+print("\n📦 Indexing Summary:")
+print(f"   • Files indexed: {len(files)}")
+print(f"   • Total chunks:  {total_chunks}")
+print("\n✅ Indexing complete! Your data is ready for querying.")
