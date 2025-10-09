@@ -2,13 +2,17 @@ services:
   - type: web
     name: ai-shabaton-1
     env: python
-    region: frankfurt  # אפשר לשנות ל: oregon / singapore / virginia
+    region: frankfurt
     plan: free
 
     # --- תהליך הבנייה ---
     buildCommand: |
       echo "🚀 Starting build process..."
       pip install -r requirements.txt
+
+      # תיקון תאימות בין Chroma ל־OpenAI SDK
+      pip install "openai<1.0.0" --force-reinstall
+      pip install "chromadb>=0.5.3"
 
       # יצירת תיקיות וקבצי טקסט אם לא קיימים
       mkdir -p data/pages
