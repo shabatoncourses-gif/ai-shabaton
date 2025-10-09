@@ -6,42 +6,11 @@ services:
     plan: free
 
     buildCommand: |
-      echo "🚀 Starting build process..."
       pip install -r requirements.txt
+      pip install "chromadb>=0.5.5" "openai>=1.0.0" beautifulsoup4 html5lib tqdm requests
 
-      # תאימות בין גרסאות
-      pip install "chromadb>=0.5.5"
-      pip install "openai>=1.0.0"
-
-      # יצירת תיקיות וקבצים בסיסיים
-      mkdir -p data/pages
-      if [ ! -f data/pages/about.txt ]; then
-        echo "עמוד אודות האתר שבתון. כאן תוכל למצוא מידע כללי על האתר והשירותים." > data/pages/about.txt
-      fi
-      if [ ! -f data/pages/faq.txt ]; then
-        echo "שאלות ותשובות נפוצות על אתר שבתון ושירותיו." > data/pages/faq.txt
-      fi
-      if [ ! -f data/pages/contact.txt ]; then
-        echo "צור קשר עם צוות שבתון דרך טופס באתר או במייל info@shabaton.online" > data/pages/contact.txt
-      fi
-
-      echo "✅ Created data/pages directory with default .txt files."
-
-      # --- אינדוקס תמידי ---
-      echo "🔧 Running indexer.py..."
-      python indexer.py 2>&1 | tee indexer_log.txt
-      echo "📄 --- Full indexer log ---"
-      cat indexer_log.txt
-      echo "📄 ------------------------"
-
-      if [ -f data/index_summary.json ]; then
-        echo "✅ Index summary created successfully!"
-        cat data/index_summary.json
-      else
-        echo "⚠️ index_summary.json not found after indexing."
-      fi
-
-      echo "✅ Build completed successfully!"
+      echo "🔧 Running indexer..."
+      python indexer.py || echo "⚠️ Indexing failed but continuing deploy"
 
     startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
 
@@ -52,14 +21,12 @@ services:
         value: /opt/render/project/src/data/index
       - key: EMBED_MODEL
         value: text-embedding-3-small
-      - key: LLM_MODEL
-        value: gpt-4o-mini
-      - key: TOP_K
-        value: "4"
-      - key: BACKEND_ORIGIN
-        value: "*"
       - key: MAX_CHUNK_TOKENS
         value: "800"
+      - key: SITEMAP_URL_1
+        value: https://www.shabaton.online/sitemap.xml
+      - key: SITEMAP_URL_2
+        value: https://www.morim.boutique/sitemap.xml
 
   - type: cron
     name: daily-indexer
@@ -77,3 +44,7 @@ services:
         value: text-embedding-3-small
       - key: MAX_CHUNK_TOKENS
         value: "800"
+      - key: SITEMAP_URL_1
+        value: https://www.shabaton.online/sitemap.xml
+      - key: SITEMAP_URL_2
+        value: https://www.morim.boutique/sitemap.xml
