@@ -11,19 +11,27 @@ CHROMA_DIR = os.getenv("CHROMA_DB_DIR", "./data/index")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
 
 if not OPENAI_API_KEY:
-    raise RuntimeError("❌ Missing OPENAI_API_KEY — add it in your .env file or in Render environment.")
+    raise RuntimeError("❌ Missing OPENAI_API_KEY — add it in your .env file or Render environment")
 
-# --- יצירת תיקייה למסד הנתונים אם לא קיימת ---
+# --- יצירת תיקיית אחסון למסד הנתונים ---
 os.makedirs(CHROMA_DIR, exist_ok=True)
 
-# --- חיבור ל־ChromaDB ---
+# --- חיבור למסד הנתונים של Chroma ---
 client = chromadb.PersistentClient(path=CHROMA_DIR)
 
 # --- יצירת פונקציית Embedding ---
-ef = embedding_functions.OpenAIEmbeddingFunction(
-    api_key=OPENAI_API_KEY,
-    model_name=EMBED_MODEL,
-)
+# משתמשת ב־OpenAI API בצורה תואמת לגרסה החדשה
+class SafeOpenAIEmbeddingFunction:
+    def __init__(self, api_key, model_name):
+        from openai import OpenAI
+        self.client = OpenAI(api_key=api_key)
+        self.model_name = model_name
+
+    def __call__(self, texts):
+        response = self.client.embeddings.create(model=self.model_name, input=texts)
+        return [item.embedding for item in response.data]
+
+ef = SafeOpenAIEmbeddingFunction(api_key=OPENAI_API_KEY, model_name=EMBED_MODEL)
 
 # --- טעינת או יצירת קולקציה ---
 try:
@@ -47,13 +55,12 @@ print(f"📚 Found {len(files)} text files to index.\n")
 
 # --- אינדוקס קבצים ---
 total_chunks = 0
-
 for fname in files:
     path = os.path.join(pages_dir, fname)
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
 
-    # חלוקה לקטעים (chunks)
+    # חלוקה לקטעים קטנים (chunks)
     max_chars = int(os.getenv("MAX_CHUNK_TOKENS", "800")) * 4
     chunks = [
         text[i:i + max_chars]
