@@ -54,4 +54,40 @@ async def query(request: Request):
         return {"answer": "לא התקבלה שאלה.", "sources": []}
 
     answer_text = None
-    sources =
+    sources = []
+
+    if collection:
+        try:
+            results = collection.query(query_texts=[question], n_results=3)
+            docs = results.get("documents", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            if docs:
+                context = "\n\n".join(docs)
+                sources = [m["url"] for m in metas if "url" in m]
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "אתה עוזר חכם שמבוסס רק על מידע מתוך אתר שבתון."},
+                        {"role": "user", "content": f"שאלה: {question}\n\nמידע רלוונטי מהאתר:\n{context}"}
+                    ]
+                )
+                answer_text = response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"⚠️ Error querying Chroma: {e}")
+
+    if not answer_text:
+        answer_text = "לא נמצא מידע רלוונטי, מוזמנים לפנות לצוות שבתון במייל info@shabaton.co.il"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            await session.post(ZAPIER_WEBHOOK_URL, json={
+                "timestamp": datetime.utcnow().isoformat(),
+                "question": question,
+                "answer": answer_text,
+                "sources": sources,
+                "page": request.headers.get("Referer", "Unknown"),
+            })
+    except Exception as e:
+        print(f"⚠️ Failed to send to Zapier: {e}")
+
+    return {"answer": answer_text, "sources": sources}
