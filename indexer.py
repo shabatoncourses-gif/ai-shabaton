@@ -43,17 +43,34 @@ except Exception:
     collection = client.create_collection("shabaton_faq", embedding_function=ef)
     print("🆕 Created new collection 'shabaton_faq'")
 
-# === פונקציות עזר ===
-def get_sitemap_links(url):
+# === בקשה עם User-Agent אמיתי כדי לעקוף חסימות של Duda ===
+def fetch_url(url):
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/128.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9,he;q=0.8",
+    }
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, headers=headers, timeout=15)
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "xml")
-        return [loc.text.strip() for loc in soup.find_all("loc")]
+        return r.text
     except Exception as e:
-        print(f"⚠️ Failed to load sitemap {url}: {e}")
-        return []
+        print(f"⚠️ Failed to fetch {url}: {e}")
+        return None
 
+# === קריאת sitemap-ים ===
+def get_sitemap_links(url):
+    xml = fetch_url(url)
+    if not xml:
+        return []
+    soup = BeautifulSoup(xml, "xml")
+    locs = [loc.text.strip() for loc in soup.find_all("loc")]
+    return locs
+
+# === חילוץ טקסט נקי מ־HTML ===
 def text_from_html(html):
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript", "header", "footer", "svg", "nav"]):
@@ -75,7 +92,7 @@ if os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, "r", encoding="utf-8") as f:
         history = json.load(f)
 
-# === קריאת sitemap-ים ===
+# === איסוף URL-ים מכל הסייטמאפס ===
 urls = []
 for sm in SITEMAPS:
     found = get_sitemap_links(sm)
@@ -100,68 +117,64 @@ changes = {
     "skipped": [],
 }
 
+# === עיבוד כל דף ===
 for url in urls:
+    html = fetch_url(url)
+    if not html:
+        print(f"⚠️ Skipped (failed fetch): {url}")
+        continue
+
+    text = text_from_html(html)
+    if len(text) < 100:
+        print(f"⚠️ Skipped (too short): {url}")
+        continue
+
+    text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    previous_hash = cache.get(url)
+
+    if previous_hash == text_hash:
+        skipped_pages += 1
+        changes["skipped"].append(url)
+        print(f"⏩ Skipped (no change): {url}")
+        continue
+
+    # חדש או מעודכן
+    if previous_hash is None:
+        new_pages += 1
+        changes["new"].append(url)
+    else:
+        updated_pages += 1
+        changes["updated"].append(url)
+
+    # יצירת chunks
+    max_chars = int(os.getenv("MAX_CHUNK_TOKENS", "800")) * 4
+    chunks = [
+        text[i:i + max_chars]
+        for i in range(0, len(text), max_chars)
+        if len(text[i:i + max_chars].strip()) > 50
+    ]
+
+    ids = [f"{urlparse(url).path.strip('/') or 'index'}#chunk{i}" for i in range(len(chunks))]
+    metas = [{"source": url} for _ in chunks]
+
+    # מחיקת גרסה קודמת (אם קיימת)
     try:
-        r = requests.get(url, timeout=15)
-        if r.status_code != 200:
-            print(f"⚠️ Skipped (HTTP {r.status_code}): {url}")
-            continue
+        existing = collection.get(ids=ids)
+        if existing and existing["ids"]:
+            collection.delete(ids=existing["ids"])
+    except Exception:
+        pass
 
-        html = r.text
-        text = text_from_html(html)
-        if len(text) < 100:
-            print(f"⚠️ Skipped (too short): {url}")
-            continue
+    # הוספה ל־Chroma
+    collection.add(documents=chunks, metadatas=metas, ids=ids)
+    cache[url] = text_hash
 
-        text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        previous_hash = cache.get(url)
+    index_summary["pages"].append({"url": url, "chunks": len(chunks)})
+    print(f"[+] Indexed {url} ({len(chunks)} chunks)")
 
-        if previous_hash == text_hash:
-            skipped_pages += 1
-            changes["skipped"].append(url)
-            print(f"⏩ Skipped (no change): {url}")
-            continue
-
-        # קביעה אם חדש או מעודכן
-        if previous_hash is None:
-            new_pages += 1
-            changes["new"].append(url)
-        else:
-            updated_pages += 1
-            changes["updated"].append(url)
-
-        # יצירת chunks
-        max_chars = int(os.getenv("MAX_CHUNK_TOKENS", "800")) * 4
-        chunks = [
-            text[i:i + max_chars]
-            for i in range(0, len(text), max_chars)
-            if len(text[i:i + max_chars].strip()) > 50
-        ]
-
-        ids = [f"{urlparse(url).path.strip('/') or 'index'}#chunk{i}" for i in range(len(chunks))]
-        metas = [{"source": url} for _ in chunks]
-
-        # מחיקת גרסה קודמת (אם קיימת)
-        try:
-            existing = collection.get(ids=ids)
-            if existing and existing["ids"]:
-                collection.delete(ids=existing["ids"])
-        except Exception:
-            pass
-
-        # הוספת הנתונים
-        collection.add(documents=chunks, metadatas=metas, ids=ids)
-        cache[url] = text_hash
-
-        index_summary["pages"].append({"url": url, "chunks": len(chunks)})
-        print(f"[+] Indexed {url} ({len(chunks)} chunks)")
-
-    except Exception as e:
-        print(f"[!] Failed to process {url}: {e}")
-
+# === שמירה לסיכום / היסטוריה ===
 index_summary["total_chunks"] = sum(p["chunks"] for p in index_summary["pages"])
 
-# === שמירת קבצים ===
 with open(SUMMARY_FILE, "w", encoding="utf-8") as f:
     json.dump(index_summary, f, ensure_ascii=False, indent=2)
 
@@ -170,7 +183,7 @@ with open(CACHE_FILE, "w", encoding="utf-8") as f:
 
 history.append(changes)
 with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-    json.dump(history[-10:], f, ensure_ascii=False, indent=2)  # שמור רק 10 ריצות אחרונות
+    json.dump(history[-10:], f, ensure_ascii=False, indent=2)
 
 # === סיכום ===
 print("\n📦 Indexing Summary:")
