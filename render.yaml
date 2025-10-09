@@ -2,18 +2,45 @@ services:
   - type: web
     name: ai-shabaton-1
     env: python
-    region: frankfurt
+    region: frankfurt  # אפשר לשנות ל: oregon / singapore / virginia
     plan: free
 
-    buildCommand: "pip install -r requirements.txt"
+    # --- תהליך הבנייה ---
+    buildCommand: |
+      echo "🚀 Starting build process..."
+      pip install -r requirements.txt
+
+      # יצירת תיקיות וקבצי טקסט אם לא קיימים
+      mkdir -p data/pages
+      if [ ! -f data/pages/about.txt ]; then
+        echo "עמוד אודות האתר שבתון. כאן תוכל למצוא מידע כללי על האתר והשירותים." > data/pages/about.txt
+      fi
+      if [ ! -f data/pages/faq.txt ]; then
+        echo "שאלות ותשובות נפוצות על אתר שבתון ושירותיו." > data/pages/faq.txt
+      fi
+      if [ ! -f data/pages/contact.txt ]; then
+        echo "צור קשר עם צוות שבתון דרך טופס באתר או במייל info@shabaton.online" > data/pages/contact.txt
+      fi
+
+      echo "✅ Created data/pages directory with default .txt files."
+
+      # הפעלת indexer.py כדי לבנות את מסד הנתונים של Chroma
+      echo "🔧 Running indexer.py to build ChromaDB index..."
+      python indexer.py > indexer_log.txt 2>&1 || echo "⚠️ indexer.py failed — continuing deploy."
+
+      # הדפסת סיכום האינדוקס
+      echo "📄 --- Indexer Summary ---"
+      grep -E "Indexed|complete|Found" indexer_log.txt || cat indexer_log.txt
+      echo "📄 -----------------------"
+      echo "✅ Build completed successfully!"
+
+    # --- פקודת ההפעלה ---
     startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
 
-    # ✨ פקודה להרצה אחרי כל Deploy — יוצרת אינדקס חדש
-    postDeployCommand: "python indexer.py"
-
+    # --- משתני סביבה ---
     envVars:
       - key: OPENAI_API_KEY
-        sync: false  # את הערך מוסיפים ידנית דרך Render Dashboard
+        sync: false  # מוסיפים ידנית בממשק Render
       - key: CHROMA_DB_DIR
         value: /opt/render/project/src/data/index
       - key: EMBED_MODEL
