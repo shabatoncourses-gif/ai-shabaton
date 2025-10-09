@@ -4,7 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import chromadb
-from urllib.parse import urlparse
+from chromadb.utils import embedding_functions
 from tqdm import tqdm
 
 # --- טעינת משתני סביבה ---
@@ -22,20 +22,19 @@ if not OPENAI_API_KEY:
 os.makedirs(CHROMA_DIR, exist_ok=True)
 os.makedirs("data", exist_ok=True)
 
-# --- חיבור למסד הנתונים של Chroma ---
+# --- חיבור למסד הנתונים ---
 client = chromadb.PersistentClient(path=CHROMA_DIR)
 
 # --- מחלקת Embedding תואמת ל־OpenAI SDK החדש ---
+from openai import OpenAI
 class SafeOpenAIEmbeddingFunction:
     def __init__(self, api_key, model_name):
-        from openai import OpenAI
         self.client = OpenAI(api_key=api_key)
         self.model_name = model_name
 
     def __call__(self, texts):
         response = self.client.embeddings.create(model=self.model_name, input=texts)
         return [item.embedding for item in response.data]
-
 
 ef = SafeOpenAIEmbeddingFunction(api_key=OPENAI_API_KEY, model_name=EMBED_MODEL)
 
@@ -47,106 +46,112 @@ except Exception:
     collection = client.create_collection(name="shabaton_faq", embedding_function=ef)
     print("🆕 Created new collection 'shabaton_faq'")
 
-# --- שליפת דפים מ-sitemap ---
+# --- קריאת קבצי טקסט מקומיים ---
+pages_dir = "data/pages"
+local_files = []
+if os.path.exists(pages_dir):
+    local_files = [os.path.join(pages_dir, f) for f in os.listdir(pages_dir) if f.endswith(".txt")]
+
+# --- Sitemap URLs ---
 SITEMAPS = [
     "https://www.shabaton.online/sitemap.xml",
     "https://www.morim.boutique/sitemap.xml"
 ]
 
-def fetch_urls_from_sitemap(url):
+def fetch_sitemap_urls(sitemap_url):
+    """קורא sitemap.xml ומחזיר רשימת כתובות URL"""
     urls = []
     try:
-        r = requests.get(url, timeout=15)
+        r = requests.get(sitemap_url, timeout=10)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "xml")
         for loc in soup.find_all("loc"):
-            link = loc.text.strip()
-            if link.startswith("http"):
-                urls.append(link)
-        print(f"🌐 Found {len(urls)} URLs in {url}")
+            url = loc.text.strip()
+            if any(url.endswith(ext) for ext in [".jpg", ".png", ".pdf", ".mp4"]):
+                continue
+            urls.append(url)
     except Exception as e:
-        print(f"⚠️ Failed to fetch sitemap {url}: {e}")
+        print(f"[!] Failed to fetch sitemap {sitemap_url}: {e}")
     return urls
 
-def fetch_text_from_url(url):
+def fetch_page_text(url):
+    """מוריד ומנקה את התוכן מטקסט HTML"""
     try:
-        r = requests.get(url, timeout=15)
+        r = requests.get(url, timeout=10)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html5lib")
-
-        # מסיר סקריפטים וסטיילים
+        # הסרה של סקריפטים וסטיילים
         for tag in soup(["script", "style", "noscript"]):
-            tag.extract()
-
+            tag.decompose()
         text = soup.get_text(separator=" ", strip=True)
-        # מנקה רווחים כפולים
-        return " ".join(text.split())
+        return text
     except Exception as e:
-        print(f"⚠️ Failed to fetch {url}: {e}")
+        print(f"[!] Failed to fetch {url}: {e}")
         return ""
 
-# --- שלב 1: אינדוקס קבצי טקסט ---
-pages_dir = "data/pages"
-local_files = [f for f in os.listdir(pages_dir) if f.endswith(".txt")] if os.path.exists(pages_dir) else []
+# --- איסוף כל הדפים מה-sitemaps ---
+all_urls = []
+for sm in SITEMAPS:
+    urls = fetch_sitemap_urls(sm)
+    print(f"🌐 Fetched {len(urls)} URLs from {sm}")
+    all_urls.extend(urls)
+
+# --- אינדוקס ---
 total_chunks = 0
 index_summary = {"files": [], "total_chunks": 0}
 
-max_chars = int(os.getenv("MAX_CHUNK_TOKENS", "800")) * 4
-
-for fname in local_files:
-    path = os.path.join(pages_dir, fname)
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
-
-    chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars) if len(text[i:i + max_chars].strip()) > 50]
-    ids = [f"{fname}#chunk{i}" for i in range(len(chunks))]
-    metas = [{"source": f"https://www.shabaton.online/{fname.replace('_', '.').replace('.txt', '')}"} for _ in chunks]
-
-    if chunks:
+def add_chunks_to_collection(chunks, source_name, source_url):
+    global total_chunks
+    ids = [f"{source_name}#chunk{i}" for i in range(len(chunks))]
+    metas = [{"source": source_url} for _ in chunks]
+    try:
         collection.add(documents=chunks, metadatas=metas, ids=ids)
         total_chunks += len(chunks)
         index_summary["files"].append({
-            "file": fname,
+            "file": source_name,
             "chunks": len(chunks),
-            "source": metas[0]["source"]
+            "source": source_url
         })
-        print(f"[+] Indexed local file: {fname} ({len(chunks)} chunks)")
+        print(f"[+] Indexed {source_name} ({len(chunks)} chunks)")
+    except Exception as e:
+        print(f"[!] Failed to index {source_name}: {e}")
 
-# --- שלב 2: אינדוקס דפי האתר (sitemaps) ---
-all_urls = []
-for sitemap in SITEMAPS:
-    all_urls.extend(fetch_urls_from_sitemap(sitemap))
+max_chars = int(os.getenv("MAX_CHUNK_TOKENS", "800")) * 4
 
-print(f"🌍 Total {len(all_urls)} URLs collected from all sitemaps")
+# --- אינדוקס קבצי טקסט מקומיים ---
+for path in local_files:
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+    chunks = [
+        text[i:i + max_chars]
+        for i in range(0, len(text), max_chars)
+        if len(text[i:i + max_chars].strip()) > 50
+    ]
+    fname = os.path.basename(path)
+    add_chunks_to_collection(chunks, fname, f"https://www.shabaton.online/{fname}")
 
-for url in tqdm(all_urls, desc="Indexing sitemap pages"):
-    text = fetch_text_from_url(url)
-    if len(text) < 100:
+# --- אינדוקס דפי האתר מתוך ה־sitemap ---
+for url in tqdm(all_urls, desc="🌍 Indexing website pages"):
+    text = fetch_page_text(url)
+    if not text or len(text) < 100:
         continue
-
-    chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars) if len(text[i:i + max_chars].strip()) > 50]
-    ids = [f"{urlparse(url).path}#chunk{i}" for i in range(len(chunks))]
-    metas = [{"source": url} for _ in chunks]
-
-    if chunks:
-        try:
-            collection.add(documents=chunks, metadatas=metas, ids=ids)
-            total_chunks += len(chunks)
-            index_summary["files"].append({
-                "file": urlparse(url).path,
-                "chunks": len(chunks),
-                "source": url
-            })
-        except Exception as e:
-            print(f"[!] Failed to add {url}: {e}")
+    chunks = [
+        text[i:i + max_chars]
+        for i in range(0, len(text), max_chars)
+        if len(text[i:i + max_chars].strip()) > 50
+    ]
+    name = url.replace("https://", "").replace("/", "_")
+    add_chunks_to_collection(chunks, name, url)
 
 # --- שמירת תקציר ---
 index_summary["total_chunks"] = total_chunks
 with open(SUMMARY_FILE, "w", encoding="utf-8") as f:
     json.dump(index_summary, f, ensure_ascii=False, indent=2)
 
+# --- סיכום ---
 print("\n📦 Indexing Summary:")
-print(f"   • Files indexed: {len(index_summary['files'])}")
+print(f"   • Local files: {len(local_files)}")
+print(f"   • Sitemap pages: {len(all_urls)}")
 print(f"   • Total chunks:  {total_chunks}")
 print(f"   • Saved summary: {SUMMARY_FILE}")
-print("\n✅ Indexing complete! All sitemap pages and local files are indexed.")
+print("\n✅ Indexing complete! Your data is ready for querying.")
