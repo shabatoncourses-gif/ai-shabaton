@@ -6,11 +6,18 @@ services:
     plan: free
 
     buildCommand: |
+      echo "🚀 Starting build..."
       pip install -r requirements.txt
       pip install "chromadb>=0.5.5" "openai>=1.0.0" beautifulsoup4 html5lib tqdm requests
 
+      # יצירת תיקיות
+      mkdir -p /opt/render/project/src/data/pages
+      mkdir -p /opt/render/project/src/data/index
+
       echo "🔧 Running indexer..."
-      python indexer.py || echo "⚠️ Indexing failed but continuing deploy"
+      python indexer.py > indexer_log.txt 2>&1 || echo "⚠️ Indexing failed — continuing deploy"
+      echo "📄 --- Indexer Log ---"
+      tail -n 50 indexer_log.txt
 
     startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
 
@@ -31,9 +38,11 @@ services:
   - type: cron
     name: daily-indexer
     env: python
-    schedule: "0 3 * * *"  # כל יום ב־03:00
+    schedule: "0 3 * * *"
     region: frankfurt
-    buildCommand: "pip install -r requirements.txt"
+    buildCommand: |
+      pip install -r requirements.txt
+      mkdir -p /opt/render/project/src/data/index
     startCommand: "python indexer.py"
     envVars:
       - key: OPENAI_API_KEY
