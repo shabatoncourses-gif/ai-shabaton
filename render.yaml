@@ -2,22 +2,36 @@ services:
   - type: web
     name: shabaton-faq-backend
     env: python
-    region: frankfurt
+    region: frankfurt  # אפשר לשנות ל: oregon / virginia / singapore וכו'
     plan: free
 
     buildCommand: "pip install -r requirements.txt"
     startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
 
     envVars:
+      # --- מפתח OpenAI ---
       - key: OPENAI_API_KEY
-        sync: false   # תוסיפי את הערך ידנית בממשק Render
+        sync: false  # לא לשמור בגיט — מוסיפים ידנית דרך ממשק Render
+
+      # --- הגדרות מערכת ---
       - key: CHROMA_DB_DIR
         value: /opt/render/project/src/data/index
+
       - key: EMBED_MODEL
         value: text-embedding-3-small
+
       - key: LLM_MODEL
         value: gpt-4o-mini
+
       - key: TOP_K
         value: "4"
+
       - key: BACKEND_ORIGIN
         value: "*"
+
+      - key: MAX_CHUNK_TOKENS
+        value: "800"
+
+      # --- אופציונלי: להפעיל לוגים מפורטים ---
+      - key: LOG_LEVEL
+        value: info
