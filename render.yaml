@@ -36,6 +36,15 @@ services:
       echo "📄 --- Indexer Summary ---"
       grep -E "Indexed|complete|Found" indexer_log.txt || cat indexer_log.txt
       echo "📄 -----------------------"
+
+      # --- הצגת קובץ הסיכום החדש ---
+      if [ -f data/index_summary.json ]; then
+        echo "🗂️ Indexed pages summary:"
+        cat data/index_summary.json
+      else
+        echo "⚠️ No index_summary.json found — skipping display."
+      fi
+
       echo "✅ Build completed successfully!"
 
     # --- פקודת ההפעלה ---
