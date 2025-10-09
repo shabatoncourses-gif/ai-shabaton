@@ -144,3 +144,12 @@ async def reindex():
 @app.get("/")
 async def root():
     return {"status": "ok", "message": "AI Shabaton FAQ backend is running 🚀"}
+
+@app.get("/index-summary")
+async def get_index_summary():
+    path = "data/index_summary.json"
+    if not os.path.exists(path):
+        return {"status": "missing", "message": "index_summary.json not found yet."}
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    return {"status": "ok", "summary": content}
