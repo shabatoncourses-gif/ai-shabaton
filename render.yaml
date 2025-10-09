@@ -10,7 +10,6 @@ services:
       pip install -r requirements.txt
       pip install "chromadb>=0.5.5" "openai>=1.0.0" beautifulsoup4 html5lib tqdm requests
 
-      # יצירת תיקיות
       mkdir -p /opt/render/project/src/data/pages
       mkdir -p /opt/render/project/src/data/index
 
@@ -34,11 +33,17 @@ services:
         value: https://www.shabaton.online/sitemap.xml
       - key: SITEMAP_URL_2
         value: https://www.morim.boutique/sitemap.xml
+      - key: ALERT_EMAIL_FROM
+        value: shabaton.courses@gmail.com
+      - key: ALERT_EMAIL_TO
+        value: shabaton.courses@gmail.com
+      - key: ALERT_EMAIL_PASS
+        sync: false  # הכנס את הסיסמה כאן דרך Render Dashboard בלבד
 
   - type: cron
     name: daily-indexer
     env: python
-    schedule: "0 3 * * *"
+    schedule: "0 3 * * *"  # כל יום ב-03:00 UTC
     region: frankfurt
     buildCommand: |
       pip install -r requirements.txt
@@ -57,3 +62,9 @@ services:
         value: https://www.shabaton.online/sitemap.xml
       - key: SITEMAP_URL_2
         value: https://www.morim.boutique/sitemap.xml
+      - key: ALERT_EMAIL_FROM
+        value: shabaton.courses@gmail.com
+      - key: ALERT_EMAIL_TO
+        value: shabaton.courses@gmail.com
+      - key: ALERT_EMAIL_PASS
+        sync: false
