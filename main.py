@@ -6,6 +6,37 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import chromadb
 
+from fastapi import Request
+from openai import OpenAI
+import os
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+@app.post("/query")
+async def query(request: Request):
+    """מקבל שאלה מהאתר ומחזיר תשובה מהמודל"""
+    data = await request.json()
+    question = data.get("query", "")
+
+    if not question.strip():
+        return {"answer": "לא התקבלה שאלה.", "sources": []}
+
+    # שולחים את השאלה למודל (אפשר לשנות לפי הצורך)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "אתה עוזר חכם שמבוסס על מידע משבתון."},
+            {"role": "user", "content": question}
+        ]
+    )
+
+    answer = response.choices[0].message.content.strip()
+
+    return {"answer": answer, "sources": []}
+
+
+
+
 # --- טעינת משתני סביבה ---
 load_dotenv()
 
@@ -128,4 +159,5 @@ if os.path.exists(CHROMA_DIR):
         print(f"⚠️ Could not connect to Chroma: {e}")
 else:
     print(f"⚠️ Chroma directory {CHROMA_DIR} not found.")
+
 
