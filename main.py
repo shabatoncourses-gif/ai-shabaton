@@ -1,5 +1,6 @@
 import os
 import json
+import subprocess
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +23,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- ברירת מחדל / דף ראשי ---
+# --- פונקציה לאינדוקס אוטומטי ---
+def ensure_index_exists():
+    """אם אין אינדקס — מריץ indexer.py ובונה אחד חדש."""
+    if os.path.exists(SUMMARY_FILE):
+        print("✅ Found existing index_summary.json — skipping rebuild.")
+        return
+
+    print("⚙️ No index found — running indexer.py to build a new one...")
+    try:
+        # נריץ את הסקריפט indexer.py
+        result = subprocess.run(
+            ["python", "indexer.py"],
+            capture_output=True,
+            text=True,
+            timeout=300  # עד 5 דקות
+        )
+
+        print("📜 --- indexer.py output ---")
+        print(result.stdout)
+        print(result.stderr)
+        print("📜 -------------------------")
+
+        if os.path.exists(SUMMARY_FILE):
+            print("✅ Index successfully created!")
+        else:
+            print("⚠️ index_summary.json not found after indexing.")
+    except Exception as e:
+        print(f"❌ Failed to run indexer.py: {e}")
+
+# --- נוודא שהאינדקס נבנה כששרת עולה ---
+ensure_index_exists()
+
+# --- דף ראשי ---
 @app.get("/")
 def root():
     return {
@@ -36,7 +69,6 @@ def root():
 # --- קריאה לתקציר האינדוקס ---
 @app.get("/index-summary")
 def get_index_summary():
-    """מציג סיכום של הקבצים שאונדקסו."""
     if not os.path.exists(SUMMARY_FILE):
         return {"status": "not_found", "message": "index_summary.json not found yet."}
 
@@ -53,7 +85,6 @@ def get_index_summary():
 # --- רשימת הדפים המאונדקסים ---
 @app.get("/indexed-pages")
 def get_indexed_pages():
-    """מציג רשימה של כל הדפים (URLs) שאונדקסו."""
     if not os.path.exists(SUMMARY_FILE):
         return {"status": "not_found", "message": "No index summary found."}
 
@@ -70,7 +101,6 @@ def get_indexed_pages():
 # --- בדיקת מצב חיבור למסד הנתונים של Chroma ---
 @app.get("/chroma-status")
 def chroma_status():
-    """בודק אם מסד הנתונים של Chroma מחובר ופועל."""
     if not os.path.exists(CHROMA_DIR):
         return {"status": "not_found", "message": f"Chroma directory not found: {CHROMA_DIR}"}
     try:
