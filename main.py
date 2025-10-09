@@ -119,7 +119,9 @@ async def query(request: Request):
 
             if results and results.get("documents") and results["documents"][0]:
                 top_docs = results["documents"][0]
-                sources = [m["source"] for m in results["metadatas"][0] if "source" in m]
+             
+                sources = [m["url"] for m in results["metadatas"][0] if "url" in m]
+
 
                 context = "\n\n".join(top_docs)
                 completion = client.chat.completions.create(
@@ -205,3 +207,4 @@ def chroma_status():
         return {"status": "ok", "collections": [c.name for c in collections]}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
