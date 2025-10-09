@@ -1,9 +1,8 @@
-import os, json, subprocess, aiohttp
+import os, json, subprocess, aiohttp, re
 from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import chromadb
-from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,9 +10,8 @@ load_dotenv()
 CHROMA_DIR = os.getenv("CHROMA_DB_DIR", "./data/index")
 SUMMARY_FILE = "data/index_summary.json"
 ZAPIER_WEBHOOK_URL = "https://hooks.zapier.com/hooks/catch/5499574/u5u0yfy/"
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-app = FastAPI(title="AI Shabaton API")
+app = FastAPI(title="AI Shabaton – ללא GPT כלל")
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+# התחברות ל-ChromaDB
 chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
 collection = chroma_client.get_or_create_collection("shabaton_faq")
 
@@ -33,6 +31,19 @@ def ensure_index_exists():
 
 ensure_index_exists()
 
+# ניקוי + קיצוץ טקסט חכם
+def clean_and_trim_text(text: str, max_length: int = 400) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > max_length:
+        trimmed = text[:max_length]
+        end = max(trimmed.rfind("."), trimmed.rfind("!"), trimmed.rfind("?"))
+        if end > 100:
+            text = trimmed[:end + 1]
+        else:
+            text = trimmed + "..."
+    return text
+
+
 @app.post("/query")
 async def query(request: Request):
     data = await request.json()
@@ -40,31 +51,34 @@ async def query(request: Request):
     if not question:
         return {"answer": "לא התקבלה שאלה.", "sources": []}
 
-    answer_text = None
+    answer_text = ""
     sources = []
+
     try:
-        # חיפוש דוקומנטים דומים לפי embedding החדש
-        embedding = openai_client.embeddings.create(model="text-embedding-3-small", input=[question]).data[0].embedding
-        results = collection.query(query_embeddings=[embedding], n_results=3)
+        # שימוש ב־Chroma לחיפוש טקסטואלִי בלבד (ללא embeddings חדשים)
+        results = collection.query(
+            query_texts=[question],
+            n_results=3
+        )
         docs = results.get("documents", [[]])[0]
         metas = results.get("metadatas", [[]])[0]
+
         if docs:
-            context = "\n\n".join(docs)
-            sources = [m["url"] for m in metas if "url" in m]
-            response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "אתה עוזר חכם שמבוסס רק על מידע מתוך אתר שבתון."},
-                    {"role": "user", "content": f"שאלה: {question}\n\nמידע רלוונטי מהאתר:\n{context}"}
-                ]
-            )
-            answer_text = response.choices[0].message.content.strip()
+            combined = []
+            for i, d in enumerate(docs):
+                url = metas[i].get("url", "לא ידוע")
+                snippet = clean_and_trim_text(d)
+                combined.append(f"🔹 מקור: {url}\n{snippet}")
+                sources.append(url)
+            answer_text = "\n\n".join(combined)
+        else:
+            answer_text = "לא נמצא מידע רלוונטי באתר שבתון."
+
     except Exception as e:
         print(f"⚠️ Error querying Chroma: {e}")
+        answer_text = "אירעה שגיאה בגישה למידע."
 
-    if not answer_text:
-        answer_text = "לא נמצא מידע רלוונטי, מוזמנים לפנות לצוות שבתון במייל info@shabaton.co.il"
-
+    # שליחת השאילתה ל־Zapier (לא חובה)
     try:
         async with aiohttp.ClientSession() as session:
             await session.post(ZAPIER_WEBHOOK_URL, json={
