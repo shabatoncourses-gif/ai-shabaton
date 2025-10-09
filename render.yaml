@@ -13,6 +13,7 @@ services:
       # תיקון תאימות בין Chroma ל־OpenAI SDK
       pip install "openai<1.0.0" --force-reinstall
       pip install "chromadb>=0.5.3"
+      pip install beautifulsoup4 html5lib tqdm requests
 
       # יצירת תיקיות וקבצי טקסט אם לא קיימים
       mkdir -p data/pages
@@ -28,14 +29,14 @@ services:
 
       echo "✅ Created data/pages directory with default .txt files."
 
-      # הפעלת indexer.py כדי לבנות את מסד הנתונים של Chroma
+      # --- הפעלת indexer.py כדי לבנות את מסד הנתונים של Chroma ---
       echo "🔧 Running indexer.py to build ChromaDB index..."
       python indexer.py > indexer_log.txt 2>&1 || echo "⚠️ indexer.py failed — continuing deploy."
 
-      # הדפסת סיכום האינדוקס
-      echo "📄 --- Indexer Summary ---"
-      grep -E "Indexed|complete|Found" indexer_log.txt || cat indexer_log.txt
-      echo "📄 -----------------------"
+      # --- הצגת סיכום מהלוג ---
+      echo "📄 --- Indexer Log Summary ---"
+      grep -E "Indexed|complete|Found|🌐|🌍|✅" indexer_log.txt || tail -n 50 indexer_log.txt
+      echo "📄 ----------------------------"
 
       # --- הצגת קובץ הסיכום החדש ---
       if [ -f data/index_summary.json ]; then
