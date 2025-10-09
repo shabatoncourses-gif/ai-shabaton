@@ -2,62 +2,43 @@ import os
 import json
 import subprocess
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import chromadb
-
-from fastapi import Request
 from openai import OpenAI
-import os
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-@app.post("/query")
-async def query(request: Request):
-    """מקבל שאלה מהאתר ומחזיר תשובה מהמודל"""
-    data = await request.json()
-    question = data.get("query", "")
-
-    if not question.strip():
-        return {"answer": "לא התקבלה שאלה.", "sources": []}
-
-    # שולחים את השאלה למודל (אפשר לשנות לפי הצורך)
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "אתה עוזר חכם שמבוסס על מידע משבתון."},
-            {"role": "user", "content": question}
-        ]
-    )
-
-    answer = response.choices[0].message.content.strip()
-
-    return {"answer": answer, "sources": []}
-
-
-
 
 # --- טעינת משתני סביבה ---
 load_dotenv()
 
-CHROMA_DIR = os.getenv("CHROMA_DB_DIR", "./data/index")
-SUMMARY_FILE = os.path.join("data", "index_summary.json")
-
-
-# --- הגדרות CORS (גישה חופשית לדפדפן) ---
-
-
-from fastapi.middleware.cors import CORSMiddleware
-
+# --- יצירת אפליקציית FastAPI ---
 app = FastAPI(title="AI Shabaton API")
 
+# --- הגדרות CORS (גישה חופשית לדפדפן) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # או ["https://www.shabaton.online"] אם רוצים רק את האתר שלך
+    allow_origins=["*"],  # אפשר לשים ["https://www.shabaton.online"] אם רוצים להגביה אבטחה
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- הגדרות נתיבים ---
+CHROMA_DIR = os.getenv("CHROMA_DB_DIR", "./data/index")
+SUMMARY_FILE = os.path.join("data", "index_summary.json")
+
+# --- חיבור ל־OpenAI ---
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# --- חיבור למסד הנתונים של Chroma ---
+if os.path.exists(CHROMA_DIR):
+    try:
+        chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
+        print(f"✅ Connected to Chroma at {CHROMA_DIR}")
+    except Exception as e:
+        print(f"⚠️ Could not connect to Chroma: {e}")
+else:
+    print(f"⚠️ Chroma directory {CHROMA_DIR} not found.")
+
 
 # --- פונקציה לאינדוקס אוטומטי ---
 def ensure_index_exists():
@@ -68,14 +49,12 @@ def ensure_index_exists():
 
     print("⚙️ No index found — running indexer.py to build a new one...")
     try:
-        # נריץ את הסקריפט indexer.py
         result = subprocess.run(
             ["python", "indexer.py"],
             capture_output=True,
             text=True,
             timeout=300  # עד 5 דקות
         )
-
         print("📜 --- indexer.py output ---")
         print(result.stdout)
         print(result.stderr)
@@ -88,10 +67,12 @@ def ensure_index_exists():
     except Exception as e:
         print(f"❌ Failed to run indexer.py: {e}")
 
+
 # --- נוודא שהאינדקס נבנה כששרת עולה ---
 ensure_index_exists()
 
-# --- דף ראשי ---
+
+# --- נקודת בדיקה ראשית ---
 @app.get("/")
 def root():
     return {
@@ -101,6 +82,30 @@ def root():
         "indexed_pages": "/indexed-pages",
         "chroma_status": "/chroma-status"
     }
+
+
+# --- נקודת קצה ראשית לשאלות מהאתר ---
+@app.post("/query")
+async def query(request: Request):
+    """מקבל שאלה מהאתר ומחזיר תשובה מהמודל"""
+    data = await request.json()
+    question = data.get("query", "")
+
+    if not question.strip():
+        return {"answer": "לא התקבלה שאלה.", "sources": []}
+
+    # שולחים את השאלה למודל
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "אתה עוזר חכם שמבוסס על מידע משבתון."},
+            {"role": "user", "content": question}
+        ]
+    )
+
+    answer = response.choices[0].message.content.strip()
+    return {"answer": answer, "sources": []}
+
 
 # --- קריאה לתקציר האינדוקס ---
 @app.get("/index-summary")
@@ -118,6 +123,7 @@ def get_index_summary():
         "details": data.get("files", [])
     }
 
+
 # --- רשימת הדפים המאונדקסים ---
 @app.get("/indexed-pages")
 def get_indexed_pages():
@@ -134,6 +140,7 @@ def get_indexed_pages():
         "pages": pages
     }
 
+
 # --- בדיקת מצב חיבור למסד הנתונים של Chroma ---
 @app.get("/chroma-status")
 def chroma_status():
@@ -149,15 +156,3 @@ def chroma_status():
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-# --- חיבור למסד הנתונים של Chroma ---
-if os.path.exists(CHROMA_DIR):
-    try:
-        chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
-        print(f"✅ Connected to Chroma at {CHROMA_DIR}")
-    except Exception as e:
-        print(f"⚠️ Could not connect to Chroma: {e}")
-else:
-    print(f"⚠️ Chroma directory {CHROMA_DIR} not found.")
-
-
