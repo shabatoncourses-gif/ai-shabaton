@@ -1,0 +1,42 @@
+name: Daily Indexing
+
+on:
+  schedule:
+    - cron: "0 3 * * *"  # ירוץ כל יום ב-03:00 UTC
+  workflow_dispatch:      # מאפשר להריץ גם ידנית
+
+jobs:
+  run-indexer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install "chromadb>=0.5.5" "openai>=1.0.0" beautifulsoup4 html5lib tqdm requests
+
+      - name: Run indexer
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CHROMA_DB_DIR: ./data/index
+          EMBED_MODEL: text-embedding-3-small
+          MAX_CHUNK_TOKENS: "800"
+          SITEMAP_URL_1: https://www.shabaton.online/sitemap.xml
+          SITEMAP_URL_2: https://www.morim.boutique/sitemap.xml
+        run: |
+          mkdir -p data/index
+          python indexer.py
+
+      - name: Upload index summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: index-summary
+          path: data/index_summary.json
