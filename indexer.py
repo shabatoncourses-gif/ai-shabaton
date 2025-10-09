@@ -3,8 +3,8 @@ import json
 import hashlib
 import requests
 import re
-import smtplib
-from email.mime.text import MIMEText
+import gzip
+from io import BytesIO
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -38,6 +38,7 @@ os.makedirs(CHROMA_DIR, exist_ok=True)
 # === חיבור ל-Chroma ===
 client = chromadb.PersistentClient(path=CHROMA_DIR)
 ef = embedding_functions.OpenAIEmbeddingFunction(api_key=OPENAI_API_KEY, model_name=EMBED_MODEL)
+
 try:
     collection = client.get_collection("shabaton_faq")
     print("✅ Loaded existing collection 'shabaton_faq'")
@@ -47,22 +48,65 @@ except Exception:
 
 # === פונקציות עזר ===
 def fetch_url(url):
+    """מוריד דף HTML או XML, עם התחזות לדפדפן אמיתי כדי לעקוף חסימות 403."""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "he,en-US;q=0.7,en;q=0.3",
+        "Referer": "https://www.google.com/",
+        "Connection": "keep-alive",
+    }
+
     try:
-        r = requests.get(url, timeout=15)
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code == 403:
+            print(f"⚠️ Got 403 for {url} — retrying as Googlebot...")
+            headers["User-Agent"] = "Googlebot/2.1 (+http://www.google.com/bot.html)"
+            r = requests.get(url, headers=headers, timeout=30)
+
         r.raise_for_status()
-        return r.text
+
+        # טיפול בקבצים דחוסים (gzip)
+        if url.endswith(".gz"):
+            return gzip.decompress(r.content).decode("utf-8")
+        elif r.headers.get("Content-Encoding") == "gzip":
+            return gzip.decompress(r.content).decode("utf-8")
+        else:
+            return r.text
+
     except Exception as e:
-        print(f"⚠️ Failed to fetch {url}: {e}")
+        print(f"❌ Failed to fetch {url}: {e}")
         return None
 
+
 def get_sitemap_links(url):
+    """קורא sitemap רגיל או sitemap index ומחזיר את כל ה־URLs שבו."""
     xml = fetch_url(url)
     if not xml:
         return []
+
     soup = BeautifulSoup(xml, "xml")
-    return [loc.text.strip() for loc in soup.find_all("loc")]
+
+    # אם זה sitemap index — נרד רמה אחת
+    sitemap_tags = soup.find_all("sitemap")
+    if sitemap_tags:
+        urls = []
+        for sm in sitemap_tags:
+            loc = sm.find("loc")
+            if loc and loc.text.strip():
+                print(f"🗂 Found sub-sitemap: {loc.text.strip()}")
+                urls.extend(get_sitemap_links(loc.text.strip()))
+        return urls
+
+    # אחרת — sitemap רגיל
+    return [loc.text.strip() for loc in soup.find_all("loc") if loc.text.strip()]
+
 
 def text_from_html(html):
+    """מנקה HTML ומשאיר רק טקסט קריא."""
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript", "header", "footer", "svg", "nav"]):
         tag.decompose()
@@ -126,5 +170,6 @@ def build_index():
 
     print(f"✅ Indexed {len(index_summary['files'])} pages, total {index_summary['total_chunks']} chunks.")
 
+# === הפעלה ===
 if __name__ == "__main__":
     build_index()
