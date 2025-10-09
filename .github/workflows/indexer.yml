@@ -24,6 +24,7 @@ jobs:
           pip install "chromadb>=0.5.5" "openai>=1.0.0" beautifulsoup4 html5lib tqdm requests
 
       - name: Run indexer
+        id: indexer
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CHROMA_DB_DIR: ./data/index
@@ -33,10 +34,33 @@ jobs:
           SITEMAP_URL_2: https://www.morim.boutique/sitemap.xml
         run: |
           mkdir -p data/index
-          python indexer.py
+          python indexer.py > index_log.txt 2>&1 || echo "❌ Indexing failed" >> index_log.txt
 
-      - name: Upload index summary
+      - name: Upload index log
         uses: actions/upload-artifact@v4
         with:
-          name: index-summary
-          path: data/index_summary.json
+          name: index-log
+          path: index_log.txt
+
+      - name: Send email notification
+        if: always()  # ירוץ גם אם נכשל
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.ALERT_EMAIL_FROM }}
+          password: ${{ secrets.ALERT_EMAIL_PASS }}
+          subject: "🧠 Shabaton Indexer - ${{ job.status }}"
+          to: shabaton.courses@gmail.com
+          from: Shabaton Indexer
+          body: |
+            שלום 👋
+            ריצת האינדוקס הסתיימה במצב: **${{ job.status }}**
+
+            מצורף הלוג האחרון מהריצה:
+            ```
+            ${{ steps.indexer.outcome }}
+            ```
+
+            ניתן לצפות בפרטים נוספים ב-GitHub Actions:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
