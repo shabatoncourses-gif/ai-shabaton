@@ -27,19 +27,18 @@ services:
 
       echo "✅ Created data/pages directory with default .txt files."
 
-      # --- אינדוקס ראשוני בעת דיפלוי ---
-      echo "🔧 Running initial indexing..."
-      python indexer.py > indexer_log.txt 2>&1 || echo "⚠️ indexer.py failed — continuing deploy."
-      echo "📄 --- Indexer Summary ---"
-      grep -E "Indexed|complete|Skipped|files" indexer_log.txt || cat indexer_log.txt
-      echo "📄 -----------------------"
+      # --- אינדוקס תמידי ---
+      echo "🔧 Running indexer.py..."
+      python indexer.py 2>&1 | tee indexer_log.txt
+      echo "📄 --- Full indexer log ---"
+      cat indexer_log.txt
+      echo "📄 ------------------------"
 
-      # הדפסת תקציר אם נוצר
       if [ -f data/index_summary.json ]; then
-        echo "🗂️ Indexed pages summary:"
+        echo "✅ Index summary created successfully!"
         cat data/index_summary.json
       else
-        echo "⚠️ No index_summary.json found — skipping display."
+        echo "⚠️ index_summary.json not found after indexing."
       fi
 
       echo "✅ Build completed successfully!"
@@ -62,18 +61,13 @@ services:
       - key: MAX_CHUNK_TOKENS
         value: "800"
 
-  # --- אינדוקס אוטומטי יומי ---
   - type: cron
     name: daily-indexer
     env: python
-    schedule: "0 3 * * *"  # כל יום בשעה 03:00
+    schedule: "0 3 * * *"  # כל יום ב־03:00
     region: frankfurt
-    buildCommand: |
-      echo "⏰ Starting daily re-index..."
-      pip install -r requirements.txt
-      python indexer.py > daily_index_log.txt 2>&1 || echo "⚠️ Daily indexer failed."
-      echo "📄 Daily Indexer Summary:"
-      grep -E "Indexed|complete|files" daily_index_log.txt || cat daily_index_log.txt
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python indexer.py"
     envVars:
       - key: OPENAI_API_KEY
         sync: false
