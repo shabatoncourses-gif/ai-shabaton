@@ -9,13 +9,15 @@ services:
       echo "🚀 Starting build process..."
       pip install -r requirements.txt
 
-      # הסרת כפייה לגרסה ישנה של openai
+      # עדכוני חבילות חשובים
       pip install --upgrade openai
       pip install "chromadb>=0.5.3"
-      pip install beautifulsoup4 html5lib tqdm requests
+      pip install beautifulsoup4 html5lib tqdm requests python-dotenv
 
-      # יצירת תיקיות וקבצי טקסט אם לא קיימים
-      mkdir -p data/pages
+      # יצירת תיקיות ברירת מחדל
+      mkdir -p data/pages data/index
+
+      # קבצי תוכן בסיסיים
       if [ ! -f data/pages/about.txt ]; then
         echo "עמוד אודות האתר שבתון. כאן תוכל למצוא מידע כללי על האתר והשירותים." > data/pages/about.txt
       fi
@@ -26,21 +28,15 @@ services:
         echo "צור קשר עם צוות שבתון דרך טופס באתר או במייל info@shabaton.online" > data/pages/contact.txt
       fi
 
-      echo "✅ Created data/pages directory with default .txt files."
+      echo "✅ Created default data/pages files."
 
-      echo "🔧 Running indexer.py to build ChromaDB index..."
+      # --- שלב חדש: בניית אינדקס Chroma בכל Deploy ---
+      echo "🔧 Running indexer.py to rebuild ChromaDB index..."
       python indexer.py > indexer_log.txt 2>&1 || echo "⚠️ indexer.py failed — continuing deploy."
 
       echo "📄 --- Indexer Log Summary ---"
-      grep -E "Indexed|complete|Found|🌐|🌍|✅" indexer_log.txt || tail -n 50 indexer_log.txt
+      grep -E "Indexing|✅|done|Created|Loaded" indexer_log.txt || tail -n 40 indexer_log.txt
       echo "📄 ----------------------------"
-
-      if [ -f data/index_summary.json ]; then
-        echo "🗂️ Indexed pages summary:"
-        cat data/index_summary.json
-      else
-        echo "⚠️ No index_summary.json found — skipping display."
-      fi
 
       echo "✅ Build completed successfully!"
 
@@ -49,6 +45,11 @@ services:
     envVars:
       - key: OPENAI_API_KEY
         sync: false
+      - key: CHROMA_OPENAI_API_KEY
+        fromService:
+          name: ai-shabaton-1
+          type: web
+        # או פשוט תגדיר אותו ידנית בממשק כמו OPENAI_API_KEY
       - key: CHROMA_DB_DIR
         value: /opt/render/project/src/data/index
       - key: EMBED_MODEL
