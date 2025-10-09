@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>Shabaton AI Portal 🤖</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: "Heebo", Arial, sans-serif;
+      background: linear-gradient(135deg, #f8fafc, #e0f2fe);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+    .fade-in {
+      animation: fadeIn 0.6s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="w-full max-w-2xl bg-white rounded-2xl shadow-lg p-6 fade-in">
+    <h1 class="text-3xl font-bold text-blue-700 text-center mb-4">
+      שבתון - עוזר חכם לשירות לקוחות 🤖
+    </h1>
+    <p class="text-center text-gray-600 mb-6">
+      שאלו כל שאלה על האתר או השירותים של <b>Shabaton.online</b> וקבלו תשובה מידית.
+    </p>
+
+    <div class="flex gap-2 mb-4">
+      <input id="query" type="text" placeholder="לדוגמה: איך ניתן ליצור קשר עם שבתון?"
+        class="flex-grow border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring focus:ring-blue-200" />
+      <button id="searchBtn"
+        class="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2 font-semibold transition">
+        חפש
+      </button>
+    </div>
+
+    <div id="results" class="bg-gray-50 rounded-lg p-4 text-gray-800 min-h-[80px]"></div>
+
+    <div class="mt-6 border-t pt-4">
+      <h2 class="text-xl font-bold text-blue-700 mb-2">📦 סיכום אינדוקס</h2>
+      <button id="summaryBtn"
+        class="bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg px-3 py-1 mb-2 transition">
+        טען מידע
+      </button>
+      <div id="summary" class="text-gray-700"></div>
+    </div>
+  </div>
+
+  <footer class="mt-6 text-gray-500 text-sm text-center">
+    © 2025 Shabaton.online — מופעל על ידי OpenAI GPT 💡
+  </footer>
+
+  <script>
+    const API_BASE = "https://ai-shabaton-1.onrender.com"; // שנה אם השירות שלך בשם שונה
+
+    async function search() {
+      const query = document.getElementById("query").value.trim();
+      const resultsDiv = document.getElementById("results");
+
+      if (!query) {
+        resultsDiv.innerHTML = "❗ נא להקליד שאלה.";
+        return;
+      }
+
+      resultsDiv.innerHTML = "⏳ מחפש תשובה...";
+
+      try {
+        const res = await fetch(`${API_BASE}/query`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        const data = await res.json();
+
+        if (data.status !== "ok") {
+          resultsDiv.innerHTML = "⚠️ שגיאה בקבלת תשובה מהשרת.";
+          return;
+        }
+
+        resultsDiv.innerHTML = `
+          <div class="fade-in">
+            <p class="text-lg font-semibold text-blue-800 mb-2">💬 תשובה:</p>
+            <p class="bg-blue-50 border border-blue-200 rounded-lg p-3">${data.answer}</p>
+            ${
+              data.sources?.length
+                ? `<p class="text-sm text-gray-600 mt-2">מקורות: ${data.sources.join(", ")}</p>`
+                : ""
+            }
+          </div>
+        `;
+      } catch (e) {
+        resultsDiv.innerHTML = "❌ שגיאה בחיבור לשרת.";
+        console.error(e);
+      }
+    }
+
+    async function loadSummary() {
+      const summaryDiv = document.getElementById("summary");
+      summaryDiv.innerHTML = "⏳ טוען נתוני אינדוקס...";
+
+      try {
+        const res = await fetch(`${API_BASE}/index-summary`);
+        const data = await res.json();
+
+        if (data.error) {
+          summaryDiv.innerHTML = `<span class='text-red-600'>${data.error}</span>`;
+          return;
+        }
+
+        summaryDiv.innerHTML = `
+          <p>סה״כ קבצים: <b>${data.summary.total_files}</b></p>
+          <p>סה״כ קטעים (chunks): <b>${data.summary.total_chunks}</b></p>
+          <ul class="list-disc pr-5 mt-2">
+            ${data.summary.files.map(f => `<li>${f.name} — ${f.chunks} קטעים</li>`).join("")}
+          </ul>
+        `;
+      } catch (e) {
+        summaryDiv.innerHTML = "❌ שגיאה בטעינת הנתונים.";
+        console.error(e);
+      }
+    }
+
+    document.getElementById("searchBtn").addEventListener("click", search);
+    document.getElementById("summaryBtn").addEventListener("click", loadSummary);
+  </script>
+</body>
+</html>
