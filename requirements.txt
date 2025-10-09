@@ -1,8 +1,6 @@
-fastapi
-uvicorn
-requests
-beautifulsoup4
-openai
-chromadb
-python-dotenv
-tiktoken
+fastapi==0.115.0
+uvicorn==0.30.3
+python-dotenv==1.0.1
+openai==1.51.0
+chromadb==0.5.4
+pydantic==2.9.2
