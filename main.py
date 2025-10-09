@@ -11,7 +11,7 @@ CHROMA_DIR = os.getenv("CHROMA_DB_DIR", "./data/index")
 SUMMARY_FILE = "data/index_summary.json"
 ZAPIER_WEBHOOK_URL = "https://hooks.zapier.com/hooks/catch/5499574/u5u0yfy/"
 
-app = FastAPI(title="AI Shabaton – ללא GPT כלל")
+app = FastAPI(title="AI Shabaton – ללא GPT")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,13 +26,15 @@ chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
 collection = chroma_client.get_or_create_collection("shabaton_faq")
 
 def ensure_index_exists():
+    """ודא שהאינדקס קיים"""
     if not os.path.exists(SUMMARY_FILE):
         subprocess.run(["python", "indexer.py"], check=False)
 
 ensure_index_exists()
 
-# ניקוי + קיצוץ טקסט חכם
+# קיצוץ טקסט חכם
 def clean_and_trim_text(text: str, max_length: int = 400) -> str:
+    """מסיר רווחים וקוטע בסוף משפט"""
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) > max_length:
         trimmed = text[:max_length]
@@ -46,6 +48,7 @@ def clean_and_trim_text(text: str, max_length: int = 400) -> str:
 
 @app.post("/query")
 async def query(request: Request):
+    """מענה לשאלות מהאינדקס בלבד (ללא GPT)"""
     data = await request.json()
     question = data.get("query", "").strip()
     if not question:
@@ -55,7 +58,7 @@ async def query(request: Request):
     sources = []
 
     try:
-        # שימוש ב־Chroma לחיפוש טקסטואלִי בלבד (ללא embeddings חדשים)
+        # חיפוש ב-Chroma לפי הטקסט
         results = collection.query(
             query_texts=[question],
             n_results=3
@@ -72,13 +75,13 @@ async def query(request: Request):
                 sources.append(url)
             answer_text = "\n\n".join(combined)
         else:
-            answer_text = "לא נמצא מידע רלוונטי באתר שבתון."
+            answer_text = "לא נמצא מידע רלוונטי, מוזמנים לפנות לצוות שבתון במייל info@shabaton.co.il"
 
     except Exception as e:
         print(f"⚠️ Error querying Chroma: {e}")
         answer_text = "אירעה שגיאה בגישה למידע."
 
-    # שליחת השאילתה ל־Zapier (לא חובה)
+    # שליחה ל-Zapier (לא חובה)
     try:
         async with aiohttp.ClientSession() as session:
             await session.post(ZAPIER_WEBHOOK_URL, json={
