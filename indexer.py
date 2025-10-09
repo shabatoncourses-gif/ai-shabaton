@@ -144,7 +144,7 @@ def build_index():
         max_chars = int(os.getenv("MAX_CHUNK_TOKENS", "800")) * 4
         chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars) if len(text[i:i + max_chars].strip()) > 50]
         ids = [f"{urlparse(url).path.strip('/') or 'index'}#chunk{i}" for i in range(len(chunks))]
-        metas = [{"source": url} for _ in chunks]
+       metas = [{"url": url} for _ in chunks]
 
         # הוספה ל־Chroma
         try:
@@ -177,3 +177,4 @@ def build_index():
 # === הרצה ===
 if __name__ == "__main__":
     build_index()
+
