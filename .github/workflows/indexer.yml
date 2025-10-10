@@ -1,13 +1,15 @@
-name: Daily Indexing
+name: Nightly Indexer
 
 on:
   schedule:
-    - cron: "0 3 * * *"  # ירוץ כל יום ב-03:00 UTC
-  workflow_dispatch:      # מאפשר להריץ גם ידנית
+    # ריצה כל יום ב־3:00 לפנות בוקר לפי זמן ישראל (00:00 UTC)
+    - cron: "0 0 * * *"
+  workflow_dispatch:  # מאפשר הרצה ידנית מ-GitHub Actions
 
 jobs:
-  run-indexer:
+  build-index:
     runs-on: ubuntu-latest
+    timeout-minutes: 90  # מקסימום שעה וחצי לריצה
 
     steps:
       - name: Checkout repository
@@ -20,47 +22,28 @@ jobs:
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install "chromadb>=0.5.5" "openai>=1.0.0" beautifulsoup4 html5lib tqdm requests
+          echo "✅ Dependencies installed"
 
       - name: Run indexer
-        id: indexer
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          CHROMA_DB_DIR: ./data/index
-          EMBED_MODEL: text-embedding-3-small
+          SITEMAP_URL_1: "https://www.shabaton.online/sitemap.xml"
+          SITEMAP_URL_2: "https://www.morim.boutique/sitemap.xml"
+          CHROMA_DB_DIR: "./data/index"
+          EMBED_MODEL: "text-embedding-3-small"
           MAX_CHUNK_TOKENS: "800"
-          SITEMAP_URL_1: https://www.shabaton.online/sitemap.xml
-          SITEMAP_URL_2: https://www.morim.boutique/sitemap.xml
         run: |
-          mkdir -p data/index
-          python indexer.py > index_log.txt 2>&1 || echo "❌ Indexing failed" >> index_log.txt
+          echo "🚀 Starting nightly index build..."
+          python src/indexer.py
+          echo "✅ Indexing completed."
 
-      - name: Upload index log
-        uses: actions/upload-artifact@v4
-        with:
-          name: index-log
-          path: index_log.txt
-
-      - name: Send email notification
-        if: always()  # ירוץ גם אם נכשל
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.ALERT_EMAIL_FROM }}
-          password: ${{ secrets.ALERT_EMAIL_PASS }}
-          subject: "🧠 Shabaton Indexer - ${{ job.status }}"
-          to: shabaton.courses@gmail.com
-          from: Shabaton Indexer
-          body: |
-            שלום 👋
-            ריצת האינדוקס הסתיימה במצב: **${{ job.status }}**
-
-            מצורף הלוג האחרון מהריצה:
-            ```
-            ${{ steps.indexer.outcome }}
-            ```
-
-            ניתן לצפות בפרטים נוספים ב-GitHub Actions:
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Commit and push progress (optional)
+        if: success()
+        run: |
+          git config user.name "index-bot"
+          git config user.email "actions@github.com"
+          git add data/index_cache.json data/index_summary.json || true
+          git commit -m "🕒 Nightly index update $(date +'%Y-%m-%d')" || echo "No changes to commit"
+          git push || echo "No changes to push"
