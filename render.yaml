@@ -7,7 +7,9 @@ services:
 
     buildCommand: |
       echo "🚀 Starting build..."
+      pip install --upgrade pip
       pip install -r requirements.txt
+      pip install "numpy<2" "uvicorn" "chromadb==0.4.24" "openai==1.30.1" "beautifulsoup4" "html5lib" "tqdm" "requests" "lxml"
 
       mkdir -p /opt/render/project/src/data/pages
       mkdir -p /opt/render/project/src/data/index
@@ -17,7 +19,9 @@ services:
       echo "📄 --- Indexer Log ---"
       tail -n 50 indexer_log.txt
 
-    startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
+      echo "✅ Build completed."
+
+    startCommand: "python -m uvicorn main:app --host 0.0.0.0 --port 10000"
 
     envVars:
       - key: OPENAI_API_KEY
@@ -45,7 +49,9 @@ services:
     schedule: "0 3 * * *"  # כל יום ב-03:00 UTC
     region: frankfurt
     buildCommand: |
+      pip install --upgrade pip
       pip install -r requirements.txt
+      pip install "numpy<2"
       mkdir -p ./data/index
     startCommand: "python indexer.py"
     envVars:
@@ -67,5 +73,3 @@ services:
         value: shabaton.courses@gmail.com
       - key: ALERT_EMAIL_PASS
         sync: false
-
-
