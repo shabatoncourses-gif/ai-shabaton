@@ -9,10 +9,12 @@ render:
       buildCommand: |
         echo "🚀 Starting build..."
         pip install --upgrade pip
-        # ננעל על גרסאות יציבות ותואמות
-        pip install "numpy<2" "uvicorn==0.30.1" "chromadb==0.4.24" "openai==1.30.1" \
-          "beautifulsoup4==4.12.3" "html5lib==1.1" "tqdm==4.66.4" "requests==2.32.3" "lxml==5.3.0"
         pip install -r requirements.txt
+        pip install "numpy<2" "uvicorn" "chromadb==0.4.24" "openai==1.30.1" \
+                    "beautifulsoup4" "html5lib" "tqdm" "requests" "lxml"
+
+        echo "🧩 Running startup check..."
+        python startup_check.py || { echo "❌ Startup check failed. Aborting build."; exit 1; }
 
         mkdir -p /opt/render/project/src/data/pages
         mkdir -p /opt/render/project/src/data/index
@@ -44,18 +46,19 @@ render:
         - key: ALERT_EMAIL_TO
           value: shabaton.courses@gmail.com
         - key: ALERT_EMAIL_PASS
-          sync: false  # הכנס את הסיסמה כאן דרך Render Dashboard בלבד
+          sync: false  # הכנס סיסמה דרך Render Dashboard בלבד
 
     - type: cron
       name: daily-indexer
       env: python
       schedule: "0 3 * * *"  # כל יום ב-03:00 UTC
       region: frankfurt
+
       buildCommand: |
         pip install --upgrade pip
-        pip install "numpy<2" "chromadb==0.4.24" "openai==1.30.1" \
-          "beautifulsoup4==4.12.3" "html5lib==1.1" "tqdm==4.66.4" "requests==2.32.3" "lxml==5.3.0"
         pip install -r requirements.txt
+        pip install "numpy<2" "chromadb==0.4.24" "openai==1.30.1" "requests" "tqdm" "beautifulsoup4" "html5lib" "lxml"
+        python startup_check.py || { echo "❌ Startup check failed. Aborting cron job."; exit 1; }
         mkdir -p ./data/index
 
       startCommand: "python indexer.py"
