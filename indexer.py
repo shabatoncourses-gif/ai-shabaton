@@ -1,4 +1,4 @@
-# indexer.py - גרסה משודרגת עם resume, ריצה הדרגתית ויציבות גבוהה
+# indexer.py - גרסה משודרגת עם resume, ריצה הדרגתית ו-timeout מוגדל
 import os
 import json
 import hashlib
@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import chromadb
 from openai import OpenAI
+from datetime import datetime, timedelta
 
 # ===============================
 #   הגדרות סביבה
@@ -61,7 +62,7 @@ def embed_texts(texts, retries=3):
             try:
                 res = openai_client.embeddings.create(input=batch, model=EMBED_MODEL)
                 all_embeddings.extend([d.embedding for d in res.data])
-                time.sleep(1.2)  # הפחת עומס על OpenAI
+                time.sleep(1.2)
                 break
             except Exception as e:
                 wait = 2 ** attempt
@@ -73,9 +74,9 @@ def embed_texts(texts, retries=3):
 
 
 # ===============================
-#   fetch_url — כולל gzip ו-bypass ל-403
+#   fetch_url — כולל gzip ו-timeout מוגדל
 # ===============================
-def fetch_url(url, max_retries=3):
+def fetch_url(url, max_retries=3, timeout=60):
     ua_browser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
     ua_google = "Googlebot/2.1 (+http://www.google.com/bot.html)"
     headers = {
@@ -86,7 +87,7 @@ def fetch_url(url, max_retries=3):
 
     for attempt in range(max_retries):
         try:
-            r = requests.get(url, headers=headers, timeout=25)
+            r = requests.get(url, headers=headers, timeout=timeout)
             print(f"🔎 GET {url} → {r.status_code}, {len(r.content)} bytes", flush=True)
             if r.status_code == 200:
                 ce = r.headers.get("Content-Encoding", "").lower()
@@ -108,19 +109,6 @@ def fetch_url(url, max_retries=3):
         except Exception as e:
             print(f"⚠️ Failed to fetch {url}: {e}", flush=True)
         time.sleep(1 + attempt)
-
-    # ניסיון אחרון עם cloudscraper
-    try:
-        import cloudscraper
-        scraper = cloudscraper.create_scraper(browser={"custom": ua_browser})
-        r = scraper.get(url, timeout=25)
-        print(f"🧩 cloudscraper GET {url} → {r.status_code}, {len(r.content)} bytes", flush=True)
-        if r.status_code == 200:
-            return r.text
-    except ModuleNotFoundError:
-        pass
-    except Exception as e:
-        print(f"❌ cloudscraper error: {e}", flush=True)
 
     return None
 
@@ -164,9 +152,12 @@ def text_from_html(html):
 
 
 # ===============================
-#   בניית אינדקס (עם resume)
+#   בניית אינדקס (עם resume וחלוקה לשעה)
 # ===============================
-def build_index():
+def build_index(max_runtime_minutes=60):
+    start_time = datetime.now()
+    end_time = start_time + timedelta(minutes=max_runtime_minutes)
+
     cache = json.load(open(CACHE_FILE, "r", encoding="utf-8")) if os.path.exists(CACHE_FILE) else {}
     urls = []
 
@@ -189,6 +180,10 @@ def build_index():
     indexed = 0
 
     for idx, url in enumerate(remaining, start=1):
+        if datetime.now() > end_time:
+            print("⏰ Time limit reached — saving progress and exiting.", flush=True)
+            break
+
         html = fetch_url(url)
         if not html:
             continue
@@ -219,7 +214,6 @@ def build_index():
         except Exception as e:
             print(f"⚠️ Failed to add chunks for {url}: {e}", flush=True)
 
-        # שמירה כל 10 דפים כדי למנוע איבוד התקדמות
         if idx % 10 == 0:
             with open(CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
