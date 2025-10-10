@@ -1,182 +1,148 @@
+# main.py — גרסה יציבה ל־Render + Chroma 0.4.24 + OpenAI 1.30.1
 import os
 import json
-import subprocess
-import aiohttp
-import re
-import time
-from datetime import datetime
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+import traceback
 import chromadb
-from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from openai import OpenAI
 
-# ===============================
-# טעינת משתני סביבה
-# ===============================
-load_dotenv()
-
+# ================================
+#   הגדרות בסיסיות
+# ================================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CHROMA_DIR = os.getenv("CHROMA_DB_DIR", "./data/index")
-SUMMARY_FILE = "data/index_summary.json"
-ZAPIER_WEBHOOK_URL = "https://hooks.zapier.com/hooks/catch/5499574/u5u0yfy/"
+EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
 
-# ===============================
-# הגדרת אפליקציית FastAPI
-# ===============================
-app = FastAPI(title="AI Shabaton – ללא GPT")
+if not OPENAI_API_KEY:
+    raise RuntimeError("❌ Missing OPENAI_API_KEY environment variable")
 
+app = FastAPI(title="Shabaton AI API")
+
+# הרשאות CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ===============================
-# בדיקה שאינדקס קיים
-# ===============================
-def ensure_index_exists():
-    """ודא שהאינדקס קיים וקריא."""
-    print(f"📁 Using Chroma dir: {CHROMA_DIR}")
-    print(f"📄 Looking for summary file: {SUMMARY_FILE}")
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-    if os.path.exists(SUMMARY_FILE):
+# ================================
+#   טעינת מסד הנתונים
+# ================================
+def init_chroma():
+    """מפעיל את מסד הנתונים ומוודא שאין שדות חסרים"""
+    try:
+        os.makedirs(CHROMA_DIR, exist_ok=True)
+        client = chromadb.PersistentClient(path=CHROMA_DIR)
+        # מחיקה יזומה של collections פגומות אם קיימות
         try:
-            with open(SUMMARY_FILE, "r", encoding="utf-8") as f:
-                json.load(f)
-            print("✅ Index summary found — skipping rebuild.")
-            return
+            collections = client.list_collections()
+            for c in collections:
+                if "topic" in c.name.lower():  # הגנה על שדות ישנים
+                    print(f"⚠️ Removing outdated collection: {c.name}")
+                    client.delete_collection(c.name)
         except Exception as e:
-            print(f"⚠️ Failed to read index summary: {e}")
-    else:
-        print("⚠️ No index summary found. You might need to rerun indexer.py manually.")
+            print(f"⚠️ Skipping collection cleanup: {e}")
 
+        # יצירת אוסף תקין
+        return client.get_or_create_collection(name="shabaton_faq")
 
-ensure_index_exists()
+    except Exception as e:
+        print(f"❌ Failed to initialize Chroma: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Database init failed")
 
-# ===============================
-# פונקציה לקיצוץ טקסט חכם
-# ===============================
-def clean_and_trim_text(text: str, max_length: int = 400) -> str:
-    """מסיר רווחים וקוטע בסוף משפט."""
-    text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > max_length:
-        trimmed = text[:max_length]
-        end = max(trimmed.rfind("."), trimmed.rfind("!"), trimmed.rfind("?"))
-        if end > 100:
-            text = trimmed[:end + 1]
-        else:
-            text = trimmed + "..."
-    return text
+collection = init_chroma()
 
-# ===============================
-# API – /status
-# ===============================
+# ================================
+#   Embedding פונקציה
+# ================================
+def embed_query(text: str):
+    try:
+        res = openai_client.embeddings.create(input=[text], model=EMBED_MODEL)
+        return res.data[0].embedding
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
+
+# ================================
+#   בקשות API
+# ================================
+class Query(BaseModel):
+    query: str
+    top_k: int = 5
+
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "🧠 Shabaton AI is running."}
+
+@app.post("/ask")
+def ask(q: Query):
+    query_text = q.query.strip()
+    if not query_text:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    try:
+        query_emb = embed_query(query_text)
+        results = collection.query(query_embeddings=[query_emb], n_results=q.top_k)
+
+        if not results or not results.get("documents") or not results["documents"][0]:
+            return {"answer": "לא נמצאו תוצאות רלוונטיות.", "sources": []}
+
+        docs = results["documents"][0]
+        metas = results["metadatas"][0]
+        urls = [m.get("url") for m in metas if m.get("url")]
+
+        # שליחת השאלה ל־GPT למענה
+        context = "\n\n".join(docs[:3])
+        prompt = f"""ענה בעברית על השאלה הבאה בהתבסס על המידע הבא בלבד:
+
+שאלה:
+{query_text}
+
+מידע רלוונטי:
+{context}
+
+ענה בצורה ברורה ותמציתית:
+"""
+
+        completion = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+
+        answer = completion.choices[0].message.content.strip()
+        return {"answer": answer, "sources": urls}
+
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Query failed: {e}")
+
 @app.get("/status")
 def get_status():
-    """בודק את מצב האינדקס."""
-    status = {
-        "index_dir_exists": os.path.exists(CHROMA_DIR),
-        "index_summary_exists": os.path.exists(SUMMARY_FILE),
-        "files_in_index_dir": [],
-        "indexed_pages": None,
-        "total_chunks": None,
-        "chroma_collection_docs": None,
-        "errors": [],
+    """בדיקת מצב בסיס הנתונים"""
+    try:
+        total = len(collection.get()["ids"])
+    except Exception:
+        total = 0
+    return {
+        "status": "ok",
+        "collection": "shabaton_faq",
+        "documents": total,
     }
 
-    if os.path.exists(CHROMA_DIR):
-        try:
-            files = os.listdir(CHROMA_DIR)
-            status["files_in_index_dir"] = files
-            print(f"📂 Files in index dir: {files}")
-        except Exception as e:
-            status["errors"].append(f"Error reading index dir: {e}")
-
-    if os.path.exists(SUMMARY_FILE):
-        try:
-            with open(SUMMARY_FILE, "r", encoding="utf-8") as f:
-                summary = json.load(f)
-            status["indexed_pages"] = len(summary.get("files", []))
-            status["total_chunks"] = summary.get("total_chunks", 0)
-        except Exception as e:
-            status["errors"].append(f"Error reading summary: {e}")
-
+@app.get("/summary")
+def get_summary():
+    """מחזיר את index_summary.json אם קיים"""
     try:
-        client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = client.get_or_create_collection("shabaton_faq")
-        count = collection.count()
-        status["chroma_collection_docs"] = count
-        print(f"📊 Chroma collection docs: {count}")
+        path = os.path.join("data", "index_summary.json")
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return {"status": "not_found", "message": "index_summary.json not found yet."}
     except Exception as e:
-        status["errors"].append(f"Error accessing ChromaDB: {e}")
-
-    return status
-
-# ===============================
-# API – /query
-# ===============================
-@app.post("/query")
-async def query(request: Request):
-    """מענה לשאלות מהאינדקס בלבד (ללא GPT)."""
-    data = await request.json()
-    question = data.get("query", "").strip()
-    if not question:
-        return {"answer": "לא התקבלה שאלה.", "sources": []}
-
-    print(f"🧠 Query received: {question}")
-    sources = []
-    answer_text = ""
-
-    try:
-        client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = client.get_or_create_collection("shabaton_faq")
-        count = collection.count()
-        print(f"📦 Docs in collection: {count}")
-
-        if count == 0:
-            print("⚠️ No documents found in collection.")
-            return {
-                "answer": "האינדקס עדיין נבנה או ריק. אנא נסו שוב מאוחר יותר.",
-                "sources": [],
-            }
-
-        results = collection.query(query_texts=[question], n_results=3)
-        print(f"🔍 Raw Chroma results: {results}")
-
-        docs = results.get("documents", [[]])[0]
-        metas = results.get("metadatas", [[]])[0]
-
-        if not docs:
-            print("⚠️ No relevant results found.")
-            answer_text = "לא נמצא מידע רלוונטי במאגר."
-        else:
-            combined = []
-            for i, d in enumerate(docs):
-                url = metas[i].get("url", "לא ידוע")
-                snippet = clean_and_trim_text(d)
-                combined.append(f"🔹 מקור: {url}\n{snippet}")
-                sources.append(url)
-            answer_text = "\n\n".join(combined)
-
-    except Exception as e:
-        print(f"❌ Error querying Chroma: {e}")
-        answer_text = f"אירעה שגיאה בגישה למידע: {e}"
-
-    # שליחת לוגים ל־Zapier (לא חובה)
-    try:
-        async with aiohttp.ClientSession() as session:
-            await session.post(
-                ZAPIER_WEBHOOK_URL,
-                json={
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "question": question,
-                    "answer": answer_text,
-                    "sources": sources,
-                    "page": request.headers.get("Referer", "Unknown"),
-                },
-            )
-    except Exception as e:
-        print(f"⚠️ Failed to send to Zapier: {e}")
-
-    return {"answer": answer_text, "sources": sources}
+        raise HTTPException(status_code=500, detail=str(e))
