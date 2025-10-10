@@ -1,16 +1,27 @@
-import os, json, subprocess, aiohttp, re
+import os
+import json
+import subprocess
+import aiohttp
+import re
+import time
 from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import chromadb
 from dotenv import load_dotenv
 
+# ===============================
+# טעינת משתני סביבה
+# ===============================
 load_dotenv()
 
 CHROMA_DIR = os.getenv("CHROMA_DB_DIR", "./data/index")
 SUMMARY_FILE = "data/index_summary.json"
 ZAPIER_WEBHOOK_URL = "https://hooks.zapier.com/hooks/catch/5499574/u5u0yfy/"
 
+# ===============================
+# הגדרת אפליקציית FastAPI
+# ===============================
 app = FastAPI(title="AI Shabaton – ללא GPT")
 
 app.add_middleware(
@@ -21,18 +32,61 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ===============================
 # התחברות ל-ChromaDB
+# ===============================
 chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
 collection = chroma_client.get_or_create_collection("shabaton_faq")
 
-def ensure_index_exists():
-    """ודא שהאינדקס קיים"""
-    if not os.path.exists(SUMMARY_FILE):
-        subprocess.run(["python", "indexer.py"], check=False)
 
+# ===============================
+# אינדוקס ראשוני עם resume
+# ===============================
+def ensure_index_exists():
+    """
+    ודא שהאינדקס קיים, או המשך אינדוקס במקטעים אם הוא לא הושלם.
+    אם האינדוקס הופסק באמצע, הקובץ indexer.py ירוץ שוב עד שכל הדפים יאונדקסו.
+    """
+    max_runtime_minutes = 60  # עד שעה להרצה רציפה
+    start = time.time()
+
+    # רוץ רק אם אין אינדקס תקין
+    if os.path.exists(SUMMARY_FILE):
+        print("✅ Index summary found – skipping initial indexing.")
+        return
+
+    while time.time() - start < max_runtime_minutes * 60:
+        print("🔄 Running incremental indexing batch...", flush=True)
+        result = subprocess.run(["python", "indexer.py"], capture_output=True, text=True)
+
+        print(result.stdout)
+        if result.stderr.strip():
+            print(result.stderr)
+
+        # אם מופיעה הודעה שסיים הכול, עצור
+        if "✅" in result.stdout or "completed" in result.stdout.lower() or "done" in result.stdout.lower():
+            print("✅ Indexing fully completed.")
+            break
+
+        # אם נוצר קובץ תקין — עצור
+        if os.path.exists(SUMMARY_FILE):
+            print("✅ Index summary detected, proceeding.")
+            break
+
+        # חכה 10 שניות בין סבבים
+        print("⏸ Waiting 10 seconds before next batch...")
+        time.sleep(10)
+
+    if not os.path.exists(SUMMARY_FILE):
+        print("⚠️ Index summary not found after full run.")
+
+# הרצת בדיקה
 ensure_index_exists()
 
-# קיצוץ טקסט חכם
+
+# ===============================
+# פונקציה לקיצוץ טקסט חכם
+# ===============================
 def clean_and_trim_text(text: str, max_length: int = 400) -> str:
     """מסיר רווחים וקוטע בסוף משפט"""
     text = re.sub(r"\s+", " ", text).strip()
@@ -45,9 +99,10 @@ def clean_and_trim_text(text: str, max_length: int = 400) -> str:
             text = trimmed + "..."
     return text
 
-import os, json
-import chromadb
 
+# ===============================
+# API – /status
+# ===============================
 @app.get("/status")
 def get_status():
     status = {
@@ -60,14 +115,14 @@ def get_status():
         "errors": []
     }
 
-    # 1️⃣ כמה קבצים יש בתיקייה ./data/index
+    # כמה קבצים יש בתיקייה ./data/index
     if os.path.exists(CHROMA_DIR):
         try:
             status["files_in_index_dir"] = len(os.listdir(CHROMA_DIR))
         except Exception as e:
             status["errors"].append(f"Error reading index dir: {e}")
 
-    # 2️⃣ קריאת index_summary.json
+    # קריאת index_summary.json
     if os.path.exists(SUMMARY_FILE):
         try:
             with open(SUMMARY_FILE, "r", encoding="utf-8") as f:
@@ -77,7 +132,7 @@ def get_status():
         except Exception as e:
             status["errors"].append(f"Error reading summary file: {e}")
 
-    # 3️⃣ קריאת מצב אוסף המסמכים ב־ChromaDB
+    # קריאת מצב אוסף המסמכים ב־ChromaDB
     try:
         client = chromadb.PersistentClient(path=CHROMA_DIR)
         collection = client.get_or_create_collection("shabaton_faq")
@@ -87,6 +142,10 @@ def get_status():
 
     return status
 
+
+# ===============================
+# API – /query
+# ===============================
 @app.post("/query")
 async def query(request: Request):
     """מענה לשאלות מהאינדקס בלבד (ללא GPT)"""
@@ -136,4 +195,3 @@ async def query(request: Request):
         print(f"⚠️ Failed to send to Zapier: {e}")
 
     return {"answer": answer_text, "sources": sources}
-
