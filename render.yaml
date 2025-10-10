@@ -8,7 +8,6 @@ services:
     buildCommand: |
       echo "🚀 Starting build..."
       pip install -r requirements.txt
-      pip install "chromadb>=0.5.5" "openai>=1.0.0" beautifulsoup4 html5lib tqdm requests
 
       mkdir -p /opt/render/project/src/data/pages
       mkdir -p /opt/render/project/src/data/index
@@ -68,4 +67,5 @@ services:
         value: shabaton.courses@gmail.com
       - key: ALERT_EMAIL_PASS
         sync: false
+
 
