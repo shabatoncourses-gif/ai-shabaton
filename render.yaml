@@ -24,7 +24,7 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: CHROMA_DB_DIR
-        value: /opt/render/project/src/data/index
+        value: ./data/index
       - key: EMBED_MODEL
         value: text-embedding-3-small
       - key: MAX_CHUNK_TOKENS
@@ -47,13 +47,13 @@ services:
     region: frankfurt
     buildCommand: |
       pip install -r requirements.txt
-      mkdir -p /opt/render/project/src/data/index
+      mkdir -p ./data/index
     startCommand: "python indexer.py"
     envVars:
       - key: OPENAI_API_KEY
         sync: false
       - key: CHROMA_DB_DIR
-        value: /opt/render/project/src/data/index
+        value: ./data/index
       - key: EMBED_MODEL
         value: text-embedding-3-small
       - key: MAX_CHUNK_TOKENS
@@ -68,3 +68,4 @@ services:
         value: shabaton.courses@gmail.com
       - key: ALERT_EMAIL_PASS
         sync: false
+
