@@ -1,84 +1,45 @@
-render:
-  services:
-    - type: web
-      name: ai-shabaton-1
-      env: python
-      region: frankfurt
-      plan: free
+services:
+  - type: web
+    name: ai-shabaton-1
+    env: python
+    region: frankfurt
+    plan: free
 
-      buildCommand: |
-        echo "🚀 Starting build..."
-        pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install "numpy<2" "uvicorn" "chromadb==0.4.24" "openai==1.30.1" \
-                    "beautifulsoup4" "html5lib" "tqdm" "requests" "lxml"
+    buildCommand: |
+      echo "🚀 Starting build..."
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      pip install "numpy<2" "uvicorn" "chromadb==0.4.24" "openai==1.30.1" \
+                  "beautifulsoup4" "html5lib" "tqdm" "requests" "lxml"
 
-        echo "🧩 Running startup check..."
-        python startup_check.py || { echo "❌ Startup check failed. Aborting build."; exit 1; }
+      echo "🧩 Running startup check..."
+      python startup_check.py || { echo "❌ Startup check failed. Aborting build."; exit 1; }
 
-        mkdir -p /opt/render/project/src/data/pages
-        mkdir -p /opt/render/project/src/data/index
+      mkdir -p /opt/render/project/src/data/pages
+      mkdir -p /opt/render/project/src/data/index
 
-        echo "🔧 Running indexer..."
-        python indexer.py > indexer_log.txt 2>&1 || echo "⚠️ Indexing failed — continuing deploy"
-        echo "📄 --- Indexer Log ---"
-        tail -n 50 indexer_log.txt
+      echo "✅ Build completed successfully (indexing done by GitHub Actions)."
 
-        echo "✅ Build completed."
+    startCommand: "python -m uvicorn main:app --host 0.0.0.0 --port 10000"
 
-      startCommand: "python -m uvicorn main:app --host 0.0.0.0 --port 10000"
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CHROMA_DB_DIR
+        value: ./data/index
+      - key: EMBED_MODEL
+        value: text-embedding-3-small
+      - key: MAX_CHUNK_TOKENS
+        value: "800"
+      - key: SITEMAP_URL_1
+        value: https://www.shabaton.online/sitemap.xml
+      - key: SITEMAP_URL_2
+        value: https://www.morim.boutique/sitemap.xml
+      - key: ALERT_EMAIL_FROM
+        value: shabaton.courses@gmail.com
+      - key: ALERT_EMAIL_TO
+        value: shabaton.courses@gmail.com
+      - key: ALERT_EMAIL_PASS
+        sync: false  # הכנס סיסמה דרך Render Dashboard בלבד
 
-      envVars:
-        - key: OPENAI_API_KEY
-          sync: false
-        - key: CHROMA_DB_DIR
-          value: ./data/index
-        - key: EMBED_MODEL
-          value: text-embedding-3-small
-        - key: MAX_CHUNK_TOKENS
-          value: "800"
-        - key: SITEMAP_URL_1
-          value: https://www.shabaton.online/sitemap.xml
-        - key: SITEMAP_URL_2
-          value: https://www.morim.boutique/sitemap.xml
-        - key: ALERT_EMAIL_FROM
-          value: shabaton.courses@gmail.com
-        - key: ALERT_EMAIL_TO
-          value: shabaton.courses@gmail.com
-        - key: ALERT_EMAIL_PASS
-          sync: false  # הכנס סיסמה דרך Render Dashboard בלבד
-
-    - type: cron
-      name: daily-indexer
-      env: python
-      schedule: "0 3 * * *"  # כל יום ב-03:00 UTC
-      region: frankfurt
-
-      buildCommand: |
-        pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install "numpy<2" "chromadb==0.4.24" "openai==1.30.1" "requests" "tqdm" "beautifulsoup4" "html5lib" "lxml"
-        python startup_check.py || { echo "❌ Startup check failed. Aborting cron job."; exit 1; }
-        mkdir -p ./data/index
-
-      startCommand: "python indexer.py"
-
-      envVars:
-        - key: OPENAI_API_KEY
-          sync: false
-        - key: CHROMA_DB_DIR
-          value: ./data/index
-        - key: EMBED_MODEL
-          value: text-embedding-3-small
-        - key: MAX_CHUNK_TOKENS
-          value: "800"
-        - key: SITEMAP_URL_1
-          value: https://www.shabaton.online/sitemap.xml
-        - key: SITEMAP_URL_2
-          value: https://www.morim.boutique/sitemap.xml
-        - key: ALERT_EMAIL_FROM
-          value: shabaton.courses@gmail.com
-        - key: ALERT_EMAIL_TO
-          value: shabaton.courses@gmail.com
-        - key: ALERT_EMAIL_PASS
-          sync: false
+    autoDeploy: true
