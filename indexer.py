@@ -1,4 +1,4 @@
-# indexer.py — גרסה 2025-10 עם resume חכם ואינדוקס מתגלגל
+# indexer.py — גרסה יציבה ל־Render (OpenAI 1.30.1 + Chroma 0.4.24)
 import os
 import json
 import hashlib
@@ -25,6 +25,7 @@ SITEMAPS = [
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CHROMA_DIR = os.getenv("CHROMA_DB_DIR", "./data/index")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+MAX_CHUNK_TOKENS = int(os.getenv("MAX_CHUNK_TOKENS", "800"))
 
 SUMMARY_FILE = os.path.join("data", "index_summary.json")
 CACHE_FILE = os.path.join("data", "index_cache.json")
@@ -42,9 +43,8 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY)
 chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
 collection = chroma_client.get_or_create_collection("shabaton_faq")
 
-
 # ===============================
-#   פונקציית Embedding עם retry
+#   Embeddings עם retry חכם
 # ===============================
 def embed_texts(texts, retries=3):
     all_embeddings = []
@@ -58,15 +58,14 @@ def embed_texts(texts, retries=3):
                 break
             except Exception as e:
                 wait = 2 ** attempt
-                print(f"⚠️ OpenAI error: {e}, waiting {wait}s")
+                print(f"⚠️ OpenAI error: {e}, waiting {wait}s before retry...")
                 time.sleep(wait)
         else:
             print("❌ Failed to embed batch after retries.")
     return all_embeddings
 
-
 # ===============================
-#   Fetch URL — עם gzip ו־403 bypass
+#   Fetch URL (gzip + 403 bypass)
 # ===============================
 def fetch_url(url):
     headers = {
@@ -89,9 +88,8 @@ def fetch_url(url):
         print(f"⚠️ Error fetching {url}: {e}")
     return None
 
-
 # ===============================
-#   Sitemap Parser
+#   Sitemap Parser (כולל nested)
 # ===============================
 def get_sitemap_links(url):
     xml = fetch_url(url)
@@ -108,7 +106,6 @@ def get_sitemap_links(url):
         return urls
     return [loc.text.strip() for loc in soup.find_all("loc") if loc.text.strip()]
 
-
 # ===============================
 #   HTML → טקסט
 # ===============================
@@ -121,34 +118,29 @@ def text_from_html(html):
     text = re.sub(r"[ \t]+", " ", text)
     return text.strip()
 
-
 # ===============================
-#   Build Index — Rolling Resume
+#   Index Builder (עם resume)
 # ===============================
 def build_index():
     cache = {}
     if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            cache = json.load(f)
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+        except:
+            print("⚠️ Cache file corrupted, starting fresh.")
 
     urls = []
     for sm in SITEMAPS:
         urls.extend(get_sitemap_links(sm))
-    urls = list(dict.fromkeys(urls))
+    urls = list(dict.fromkeys(urls))  # unique order-preserving
 
     if not urls:
         print("🚫 No URLs found in sitemap.")
         return
 
-    print(f"🌐 {len(urls)} URLs total.")
-    remaining = []
-    for u in urls:
-        if u not in cache:
-            remaining.append(u)
-        else:
-            # בדוק אם התוכן השתנה
-            pass
-
+    print(f"🌐 Found {len(urls)} total URLs.")
+    remaining = [u for u in urls if u not in cache]
     print(f"🟡 {len(remaining)} new URLs to process.")
 
     index_summary = {"files": [], "total_chunks": 0}
@@ -156,11 +148,11 @@ def build_index():
     new_pages = 0
 
     start_time = time.time()
-    MAX_RUN_TIME = 60 * 60  # שעה אחת
+    MAX_RUN_TIME = 60 * 60  # שעה מקסימום
 
     for idx, url in enumerate(remaining, 1):
         if time.time() - start_time > MAX_RUN_TIME:
-            print("⏹️ Stopping — reached 1 hour limit.")
+            print("⏹️ Time limit reached, stopping.")
             break
 
         html = fetch_url(url)
@@ -175,8 +167,12 @@ def build_index():
         if cache.get(url) == text_hash:
             continue
 
-        chunk_size = int(os.getenv("MAX_CHUNK_TOKENS", "800")) * 4
-        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size) if len(text[i:i + chunk_size].strip()) > 50]
+        chunk_size = MAX_CHUNK_TOKENS * 4
+        chunks = [
+            text[i:i + chunk_size]
+            for i in range(0, len(text), chunk_size)
+            if len(text[i:i + chunk_size].strip()) > 50
+        ]
         if not chunks:
             continue
 
@@ -190,11 +186,11 @@ def build_index():
             total_chunks += len(chunks)
             new_pages += 1
             index_summary["files"].append({"url": url, "chunks": len(chunks)})
-            print(f"[{idx}/{len(remaining)}] Indexed {url} ({len(chunks)} chunks)")
+            print(f"[{idx}/{len(remaining)}] ✅ Indexed {url} ({len(chunks)} chunks)")
         except Exception as e:
             print(f"⚠️ Failed to index {url}: {e}")
 
-        # שמירה תקופתית
+        # שמירה תקופתית כל 10 עמודים
         if idx % 10 == 0:
             with open(CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
@@ -209,7 +205,7 @@ def build_index():
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
-    print(f"✅ Added {new_pages} new pages, total {total_chunks} chunks.")
+    print(f"✅ Done. Added {new_pages} pages ({total_chunks} chunks total).")
 
 if __name__ == "__main__":
     build_index()
