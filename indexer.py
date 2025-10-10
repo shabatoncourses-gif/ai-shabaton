@@ -1,4 +1,4 @@
-# indexer.py - גרסה משודרגת עם bypass ל-403, תיקון gzip, ופתרון לבעיה עם proxies ב-Chroma
+# indexer.py - גרסה משודרגת עם resume, ריצה הדרגתית ויציבות גבוהה
 import os
 import json
 import hashlib
@@ -6,11 +6,9 @@ import time
 import requests
 import re
 import gzip
-from io import BytesIO
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from datetime import datetime
 import chromadb
 from openai import OpenAI
 
@@ -45,22 +43,32 @@ chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
 
 try:
     collection = chroma_client.get_collection("shabaton_faq")
-    print("✅ Loaded existing collection 'shabaton_faq'")
+    print("✅ Loaded existing collection 'shabaton_faq'", flush=True)
 except Exception:
     collection = chroma_client.create_collection("shabaton_faq")
-    print("🆕 Created new collection 'shabaton_faq'")
+    print("🆕 Created new collection 'shabaton_faq'", flush=True)
 
-# פונקציית יצירת embeddings ישירות דרך OpenAI
-def embed_texts(texts):
-    """מקבלת רשימת טקסטים ומחזירה embeddings ממודל OpenAI"""
+
+# ===============================
+#   פונקציה ליצירת embeddings
+# ===============================
+def embed_texts(texts, retries=3):
+    """יוצר embeddings עם retry והשהייה אוטומטית"""
     all_embeddings = []
     for i in range(0, len(texts), 50):
-        batch = texts[i:i+50]
-        res = openai_client.embeddings.create(
-            input=batch,
-            model=EMBED_MODEL
-        )
-        all_embeddings.extend([d.embedding for d in res.data])
+        batch = texts[i:i + 50]
+        for attempt in range(retries):
+            try:
+                res = openai_client.embeddings.create(input=batch, model=EMBED_MODEL)
+                all_embeddings.extend([d.embedding for d in res.data])
+                time.sleep(1.2)  # הפחת עומס על OpenAI
+                break
+            except Exception as e:
+                wait = 2 ** attempt
+                print(f"⚠️ OpenAI error (attempt {attempt+1}): {e}, sleeping {wait}s", flush=True)
+                time.sleep(wait)
+        else:
+            print("❌ Failed to get embeddings after retries", flush=True)
     return all_embeddings
 
 
@@ -79,7 +87,7 @@ def fetch_url(url, max_retries=3):
     for attempt in range(max_retries):
         try:
             r = requests.get(url, headers=headers, timeout=25)
-            print(f"🔎 GET {url} → {r.status_code}, {len(r.content)} bytes")
+            print(f"🔎 GET {url} → {r.status_code}, {len(r.content)} bytes", flush=True)
             if r.status_code == 200:
                 ce = r.headers.get("Content-Encoding", "").lower()
                 content = r.content
@@ -87,18 +95,18 @@ def fetch_url(url, max_retries=3):
                     try:
                         return gzip.decompress(content).decode("utf-8", errors="ignore")
                     except Exception:
-                        print("⚠️ gzip header set but file not gzipped — decoding normally.")
+                        print("⚠️ gzip header set but file not gzipped — decoding normally.", flush=True)
                         return content.decode("utf-8", errors="ignore")
                 else:
                     return content.decode("utf-8", errors="ignore")
 
             elif r.status_code == 403:
-                print(f"⚠️ 403 Forbidden for {url}, retrying as Googlebot...")
+                print(f"⚠️ 403 Forbidden for {url}, retrying as Googlebot...", flush=True)
                 headers["User-Agent"] = ua_google
                 continue
 
         except Exception as e:
-            print(f"⚠️ Failed to fetch {url}: {e}")
+            print(f"⚠️ Failed to fetch {url}: {e}", flush=True)
         time.sleep(1 + attempt)
 
     # ניסיון אחרון עם cloudscraper
@@ -106,13 +114,13 @@ def fetch_url(url, max_retries=3):
         import cloudscraper
         scraper = cloudscraper.create_scraper(browser={"custom": ua_browser})
         r = scraper.get(url, timeout=25)
-        print(f"🧩 cloudscraper GET {url} → {r.status_code}, {len(r.content)} bytes")
+        print(f"🧩 cloudscraper GET {url} → {r.status_code}, {len(r.content)} bytes", flush=True)
         if r.status_code == 200:
             return r.text
     except ModuleNotFoundError:
         pass
     except Exception as e:
-        print(f"❌ cloudscraper error: {e}")
+        print(f"❌ cloudscraper error: {e}", flush=True)
 
     return None
 
@@ -123,7 +131,7 @@ def fetch_url(url, max_retries=3):
 def get_sitemap_links(url):
     xml = fetch_url(url)
     if not xml:
-        print(f"⚠️ No XML from {url}")
+        print(f"⚠️ No XML from {url}", flush=True)
         return []
 
     soup = BeautifulSoup(xml, "xml")
@@ -134,7 +142,7 @@ def get_sitemap_links(url):
             loc = sm.find("loc")
             if loc and loc.text.strip():
                 sub = loc.text.strip()
-                print(f"🗂 Found sub-sitemap: {sub}")
+                print(f"🗂 Found sub-sitemap: {sub}", flush=True)
                 urls.extend(get_sitemap_links(sub))
         return urls
 
@@ -156,28 +164,31 @@ def text_from_html(html):
 
 
 # ===============================
-#   בניית אינדקס
+#   בניית אינדקס (עם resume)
 # ===============================
 def build_index():
     cache = json.load(open(CACHE_FILE, "r", encoding="utf-8")) if os.path.exists(CACHE_FILE) else {}
     urls = []
 
     for sm in SITEMAPS:
-        print(f"→ reading sitemap: {sm}")
+        print(f"→ reading sitemap: {sm}", flush=True)
         found = get_sitemap_links(sm)
-        print(f"🌍 Found {len(found)} URLs in {sm}")
+        print(f"🌍 Found {len(found)} URLs in {sm}", flush=True)
         urls.extend(found)
 
     urls = list(dict.fromkeys(urls))
     if not urls:
-        print("🚫 No URLs found.")
+        print("🚫 No URLs found.", flush=True)
         return
+
+    remaining = [u for u in urls if u not in cache]
+    print(f"📦 {len(remaining)} pages to process (out of {len(urls)} total)", flush=True)
 
     index_summary = {"files": [], "total_chunks": 0}
     total_chunks = 0
     indexed = 0
 
-    for url in urls:
+    for idx, url in enumerate(remaining, start=1):
         html = fetch_url(url)
         if not html:
             continue
@@ -204,9 +215,18 @@ def build_index():
             total_chunks += len(chunks)
             index_summary["files"].append({"url": url, "chunks": len(chunks)})
             cache[url] = text_hash
-            print(f"[+] Indexed {url} ({len(chunks)} chunks)")
+            print(f"[{idx}/{len(remaining)}] [+] Indexed {url} ({len(chunks)} chunks)", flush=True)
         except Exception as e:
-            print(f"⚠️ Failed to add chunks for {url}: {e}")
+            print(f"⚠️ Failed to add chunks for {url}: {e}", flush=True)
+
+        # שמירה כל 10 דפים כדי למנוע איבוד התקדמות
+        if idx % 10 == 0:
+            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False, indent=2)
+            with open(SUMMARY_FILE, "w", encoding="utf-8") as f:
+                json.dump(index_summary, f, ensure_ascii=False, indent=2)
+            print(f"💾 Progress saved ({idx}/{len(remaining)})", flush=True)
+            time.sleep(1)
 
     index_summary["total_chunks"] = total_chunks
     with open(SUMMARY_FILE, "w", encoding="utf-8") as f:
@@ -214,7 +234,7 @@ def build_index():
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
-    print(f"✅ Indexed {indexed} pages, total {total_chunks} chunks.")
+    print(f"✅ Indexed {indexed} new pages, total {total_chunks} chunks.", flush=True)
 
 
 if __name__ == "__main__":
