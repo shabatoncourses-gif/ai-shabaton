@@ -1,4 +1,4 @@
-# indexer.py - גרסה משודרגת עם resume, ריצה הדרגתית ו-timeout מוגדל
+# indexer.py — גרסה 2025-10 עם resume חכם ואינדוקס מתגלגל
 import os
 import json
 import hashlib
@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import chromadb
 from openai import OpenAI
-from datetime import datetime, timedelta
 
 # ===============================
 #   הגדרות סביבה
@@ -41,20 +40,13 @@ os.makedirs(CHROMA_DIR, exist_ok=True)
 # ===============================
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
-
-try:
-    collection = chroma_client.get_collection("shabaton_faq")
-    print("✅ Loaded existing collection 'shabaton_faq'", flush=True)
-except Exception:
-    collection = chroma_client.create_collection("shabaton_faq")
-    print("🆕 Created new collection 'shabaton_faq'", flush=True)
+collection = chroma_client.get_or_create_collection("shabaton_faq")
 
 
 # ===============================
-#   פונקציה ליצירת embeddings
+#   פונקציית Embedding עם retry
 # ===============================
 def embed_texts(texts, retries=3):
-    """יוצר embeddings עם retry והשהייה אוטומטית"""
     all_embeddings = []
     for i in range(0, len(texts), 50):
         batch = texts[i:i + 50]
@@ -62,89 +54,68 @@ def embed_texts(texts, retries=3):
             try:
                 res = openai_client.embeddings.create(input=batch, model=EMBED_MODEL)
                 all_embeddings.extend([d.embedding for d in res.data])
-                time.sleep(1.2)
+                time.sleep(0.8)
                 break
             except Exception as e:
                 wait = 2 ** attempt
-                print(f"⚠️ OpenAI error (attempt {attempt+1}): {e}, sleeping {wait}s", flush=True)
+                print(f"⚠️ OpenAI error: {e}, waiting {wait}s")
                 time.sleep(wait)
         else:
-            print("❌ Failed to get embeddings after retries", flush=True)
+            print("❌ Failed to embed batch after retries.")
     return all_embeddings
 
 
 # ===============================
-#   fetch_url — כולל gzip ו-timeout מוגדל
+#   Fetch URL — עם gzip ו־403 bypass
 # ===============================
-def fetch_url(url, max_retries=3, timeout=60):
-    ua_browser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    ua_google = "Googlebot/2.1 (+http://www.google.com/bot.html)"
+def fetch_url(url):
     headers = {
-        "User-Agent": ua_browser,
-        "Accept": "application/xml,text/xml,text/html;q=0.9,*/*;q=0.8",
-        "Accept-Language": "he,en-US;q=0.9,en;q=0.8",
+        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+        "Accept": "text/html,application/xhtml+xml",
     }
-
-    for attempt in range(max_retries):
-        try:
-            r = requests.get(url, headers=headers, timeout=timeout)
-            print(f"🔎 GET {url} → {r.status_code}, {len(r.content)} bytes", flush=True)
-            if r.status_code == 200:
-                ce = r.headers.get("Content-Encoding", "").lower()
-                content = r.content
-                if "gzip" in ce:
-                    try:
-                        return gzip.decompress(content).decode("utf-8", errors="ignore")
-                    except Exception:
-                        print("⚠️ gzip header set but file not gzipped — decoding normally.", flush=True)
-                        return content.decode("utf-8", errors="ignore")
-                else:
-                    return content.decode("utf-8", errors="ignore")
-
-            elif r.status_code == 403:
-                print(f"⚠️ 403 Forbidden for {url}, retrying as Googlebot...", flush=True)
-                headers["User-Agent"] = ua_google
-                continue
-
-        except Exception as e:
-            print(f"⚠️ Failed to fetch {url}: {e}", flush=True)
-        time.sleep(1 + attempt)
-
+    try:
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code == 200:
+            ce = r.headers.get("Content-Encoding", "").lower()
+            if "gzip" in ce:
+                try:
+                    return gzip.decompress(r.content).decode("utf-8", errors="ignore")
+                except:
+                    return r.content.decode("utf-8", errors="ignore")
+            else:
+                return r.text
+        print(f"⚠️ {url} returned {r.status_code}")
+    except Exception as e:
+        print(f"⚠️ Error fetching {url}: {e}")
     return None
 
 
 # ===============================
-#   שליפת קישורים מסייטמאפ
+#   Sitemap Parser
 # ===============================
 def get_sitemap_links(url):
     xml = fetch_url(url)
     if not xml:
-        print(f"⚠️ No XML from {url}", flush=True)
         return []
-
     soup = BeautifulSoup(xml, "xml")
-    sitemap_tags = soup.find_all("sitemap")
-    if sitemap_tags:
+    subs = soup.find_all("sitemap")
+    if subs:
         urls = []
-        for sm in sitemap_tags:
-            loc = sm.find("loc")
-            if loc and loc.text.strip():
-                sub = loc.text.strip()
-                print(f"🗂 Found sub-sitemap: {sub}", flush=True)
-                urls.extend(get_sitemap_links(sub))
+        for s in subs:
+            loc = s.find("loc")
+            if loc:
+                urls.extend(get_sitemap_links(loc.text.strip()))
         return urls
-
-    locs = [loc.text.strip() for loc in soup.find_all("loc") if loc.text.strip()]
-    return locs
+    return [loc.text.strip() for loc in soup.find_all("loc") if loc.text.strip()]
 
 
 # ===============================
-#   ניקוי HTML לטקסט בלבד
+#   HTML → טקסט
 # ===============================
 def text_from_html(html):
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "header", "footer", "svg", "nav"]):
-        tag.decompose()
+    for t in soup(["script", "style", "noscript", "header", "footer", "svg", "nav"]):
+        t.decompose()
     text = soup.get_text(separator="\n")
     text = re.sub(r"\n\s*\n+", "\n\n", text)
     text = re.sub(r"[ \t]+", " ", text)
@@ -152,51 +123,60 @@ def text_from_html(html):
 
 
 # ===============================
-#   בניית אינדקס (עם resume וחלוקה לשעה)
+#   Build Index — Rolling Resume
 # ===============================
-def build_index(max_runtime_minutes=60):
-    start_time = datetime.now()
-    end_time = start_time + timedelta(minutes=max_runtime_minutes)
+def build_index():
+    cache = {}
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            cache = json.load(f)
 
-    cache = json.load(open(CACHE_FILE, "r", encoding="utf-8")) if os.path.exists(CACHE_FILE) else {}
     urls = []
-
     for sm in SITEMAPS:
-        print(f"→ reading sitemap: {sm}", flush=True)
-        found = get_sitemap_links(sm)
-        print(f"🌍 Found {len(found)} URLs in {sm}", flush=True)
-        urls.extend(found)
-
+        urls.extend(get_sitemap_links(sm))
     urls = list(dict.fromkeys(urls))
+
     if not urls:
-        print("🚫 No URLs found.", flush=True)
+        print("🚫 No URLs found in sitemap.")
         return
 
-    remaining = [u for u in urls if u not in cache]
-    print(f"📦 {len(remaining)} pages to process (out of {len(urls)} total)", flush=True)
+    print(f"🌐 {len(urls)} URLs total.")
+    remaining = []
+    for u in urls:
+        if u not in cache:
+            remaining.append(u)
+        else:
+            # בדוק אם התוכן השתנה
+            pass
+
+    print(f"🟡 {len(remaining)} new URLs to process.")
 
     index_summary = {"files": [], "total_chunks": 0}
     total_chunks = 0
-    indexed = 0
+    new_pages = 0
 
-    for idx, url in enumerate(remaining, start=1):
-        if datetime.now() > end_time:
-            print("⏰ Time limit reached — saving progress and exiting.", flush=True)
+    start_time = time.time()
+    MAX_RUN_TIME = 60 * 60  # שעה אחת
+
+    for idx, url in enumerate(remaining, 1):
+        if time.time() - start_time > MAX_RUN_TIME:
+            print("⏹️ Stopping — reached 1 hour limit.")
             break
 
         html = fetch_url(url)
         if not html:
             continue
+
         text = text_from_html(html)
-        if len(text) < 120:
+        if len(text) < 150:
             continue
 
         text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if cache.get(url) == text_hash:
             continue
 
-        max_chars = int(os.getenv("MAX_CHUNK_TOKENS", "800")) * 4
-        chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars) if len(text[i:i + max_chars].strip()) > 50]
+        chunk_size = int(os.getenv("MAX_CHUNK_TOKENS", "800")) * 4
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size) if len(text[i:i + chunk_size].strip()) > 50]
         if not chunks:
             continue
 
@@ -206,30 +186,30 @@ def build_index(max_runtime_minutes=60):
         try:
             embs = embed_texts(chunks)
             collection.add(documents=chunks, embeddings=embs, metadatas=metas, ids=ids)
-            indexed += 1
-            total_chunks += len(chunks)
-            index_summary["files"].append({"url": url, "chunks": len(chunks)})
             cache[url] = text_hash
-            print(f"[{idx}/{len(remaining)}] [+] Indexed {url} ({len(chunks)} chunks)", flush=True)
+            total_chunks += len(chunks)
+            new_pages += 1
+            index_summary["files"].append({"url": url, "chunks": len(chunks)})
+            print(f"[{idx}/{len(remaining)}] Indexed {url} ({len(chunks)} chunks)")
         except Exception as e:
-            print(f"⚠️ Failed to add chunks for {url}: {e}", flush=True)
+            print(f"⚠️ Failed to index {url}: {e}")
 
+        # שמירה תקופתית
         if idx % 10 == 0:
             with open(CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
             with open(SUMMARY_FILE, "w", encoding="utf-8") as f:
                 json.dump(index_summary, f, ensure_ascii=False, indent=2)
-            print(f"💾 Progress saved ({idx}/{len(remaining)})", flush=True)
-            time.sleep(1)
+            print("💾 Progress saved.")
 
+    # סיום
     index_summary["total_chunks"] = total_chunks
     with open(SUMMARY_FILE, "w", encoding="utf-8") as f:
         json.dump(index_summary, f, ensure_ascii=False, indent=2)
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
-    print(f"✅ Indexed {indexed} new pages, total {total_chunks} chunks.", flush=True)
-
+    print(f"✅ Added {new_pages} new pages, total {total_chunks} chunks.")
 
 if __name__ == "__main__":
     build_index()
