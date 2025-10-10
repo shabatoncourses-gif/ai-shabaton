@@ -45,6 +45,47 @@ def clean_and_trim_text(text: str, max_length: int = 400) -> str:
             text = trimmed + "..."
     return text
 
+import os, json
+import chromadb
+
+@app.get("/status")
+def get_status():
+    status = {
+        "index_dir_exists": os.path.exists(CHROMA_DIR),
+        "index_summary_exists": os.path.exists(SUMMARY_FILE),
+        "files_in_index_dir": None,
+        "indexed_pages": None,
+        "total_chunks": None,
+        "chroma_collection_docs": None,
+        "errors": []
+    }
+
+    # 1️⃣ כמה קבצים יש בתיקייה ./data/index
+    if os.path.exists(CHROMA_DIR):
+        try:
+            status["files_in_index_dir"] = len(os.listdir(CHROMA_DIR))
+        except Exception as e:
+            status["errors"].append(f"Error reading index dir: {e}")
+
+    # 2️⃣ קריאת index_summary.json
+    if os.path.exists(SUMMARY_FILE):
+        try:
+            with open(SUMMARY_FILE, "r", encoding="utf-8") as f:
+                summary = json.load(f)
+                status["indexed_pages"] = len(summary.get("files", []))
+                status["total_chunks"] = summary.get("total_chunks", 0)
+        except Exception as e:
+            status["errors"].append(f"Error reading summary file: {e}")
+
+    # 3️⃣ קריאת מצב אוסף המסמכים ב־ChromaDB
+    try:
+        client = chromadb.PersistentClient(path=CHROMA_DIR)
+        collection = client.get_or_create_collection("shabaton_faq")
+        status["chroma_collection_docs"] = collection.count()
+    except Exception as e:
+        status["errors"].append(f"Error accessing ChromaDB: {e}")
+
+    return status
 
 @app.post("/query")
 async def query(request: Request):
@@ -95,3 +136,4 @@ async def query(request: Request):
         print(f"⚠️ Failed to send to Zapier: {e}")
 
     return {"answer": answer_text, "sources": sources}
+
