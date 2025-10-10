@@ -32,57 +32,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # ===============================
-# אינדוקס ראשוני עם resume ודילוג חכם
+# בדיקה שאינדקס קיים
 # ===============================
 def ensure_index_exists():
-    """ודא שהאינדקס קיים, או המשך אינדוקס במקטעים אם הוא לא הושלם."""
-    max_runtime_minutes = 60
-    start = time.time()
+    """ודא שהאינדקס קיים וקריא."""
+    print(f"📁 Using Chroma dir: {CHROMA_DIR}")
+    print(f"📄 Looking for summary file: {SUMMARY_FILE}")
 
-    # בדוק אם הקובץ קיים וקריא
     if os.path.exists(SUMMARY_FILE):
         try:
             with open(SUMMARY_FILE, "r", encoding="utf-8") as f:
                 json.load(f)
-            print("✅ Index summary found and readable – skipping indexing.")
+            print("✅ Index summary found — skipping rebuild.")
             return
         except Exception as e:
-            print(f"⚠️ Found index file but couldn't read it: {e}")
-            print("↪️ Attempting to rebuild index...")
-
-    # אם אין קובץ תקין — נסה לבנות במקטעים
-    while time.time() - start < max_runtime_minutes * 60:
-        print("🔄 Running incremental indexing batch...", flush=True)
-        result = subprocess.run(["python", "indexer.py"], capture_output=True, text=True)
-
-        print(result.stdout)
-        if result.stderr.strip():
-            print(result.stderr)
-
-        if (
-            "✅" in result.stdout
-            or "completed" in result.stdout.lower()
-            or "done" in result.stdout.lower()
-        ):
-            print("✅ Indexing fully completed.")
-            break
-
-        if os.path.exists(SUMMARY_FILE):
-            print("✅ Index summary detected, proceeding.")
-            break
-
-        print("⏸ Waiting 10 seconds before next batch...")
-        time.sleep(10)
-
-    if not os.path.exists(SUMMARY_FILE):
-        print("⚠️ Index summary not found after full run.")
+            print(f"⚠️ Failed to read index summary: {e}")
+    else:
+        print("⚠️ No index summary found. You might need to rerun indexer.py manually.")
 
 
-# הרצת בדיקה רק בעת הפעלה (לא בכל query)
 ensure_index_exists()
-
 
 # ===============================
 # פונקציה לקיצוץ טקסט חכם
@@ -99,7 +69,6 @@ def clean_and_trim_text(text: str, max_length: int = 400) -> str:
             text = trimmed + "..."
     return text
 
-
 # ===============================
 # API – /status
 # ===============================
@@ -109,40 +78,40 @@ def get_status():
     status = {
         "index_dir_exists": os.path.exists(CHROMA_DIR),
         "index_summary_exists": os.path.exists(SUMMARY_FILE),
-        "files_in_index_dir": None,
+        "files_in_index_dir": [],
         "indexed_pages": None,
         "total_chunks": None,
         "chroma_collection_docs": None,
         "errors": [],
     }
 
-    # בדוק קבצים בתיקיית האינדקס
     if os.path.exists(CHROMA_DIR):
         try:
-            status["files_in_index_dir"] = len(os.listdir(CHROMA_DIR))
+            files = os.listdir(CHROMA_DIR)
+            status["files_in_index_dir"] = files
+            print(f"📂 Files in index dir: {files}")
         except Exception as e:
             status["errors"].append(f"Error reading index dir: {e}")
 
-    # בדוק קובץ סיכום
     if os.path.exists(SUMMARY_FILE):
         try:
             with open(SUMMARY_FILE, "r", encoding="utf-8") as f:
                 summary = json.load(f)
-                status["indexed_pages"] = len(summary.get("files", []))
-                status["total_chunks"] = summary.get("total_chunks", 0)
+            status["indexed_pages"] = len(summary.get("files", []))
+            status["total_chunks"] = summary.get("total_chunks", 0)
         except Exception as e:
-            status["errors"].append(f"Error reading summary file: {e}")
+            status["errors"].append(f"Error reading summary: {e}")
 
-    # בדוק מצב במסד הנתונים של Chroma
     try:
         client = chromadb.PersistentClient(path=CHROMA_DIR)
         collection = client.get_or_create_collection("shabaton_faq")
-        status["chroma_collection_docs"] = collection.count()
+        count = collection.count()
+        status["chroma_collection_docs"] = count
+        print(f"📊 Chroma collection docs: {count}")
     except Exception as e:
         status["errors"].append(f"Error accessing ChromaDB: {e}")
 
     return status
-
 
 # ===============================
 # API – /query
@@ -155,26 +124,33 @@ async def query(request: Request):
     if not question:
         return {"answer": "לא התקבלה שאלה.", "sources": []}
 
-    answer_text = ""
+    print(f"🧠 Query received: {question}")
     sources = []
+    answer_text = ""
 
     try:
-        # יצירת חיבור חדש לכל בקשה (מונע שגיאות חיבור)
         client = chromadb.PersistentClient(path=CHROMA_DIR)
         collection = client.get_or_create_collection("shabaton_faq")
+        count = collection.count()
+        print(f"📦 Docs in collection: {count}")
 
-        if collection.count() == 0:
+        if count == 0:
+            print("⚠️ No documents found in collection.")
             return {
-                "answer": "האינדקס עדיין נבנה, אנא נסו שוב בעוד מספר דקות.",
+                "answer": "האינדקס עדיין נבנה או ריק. אנא נסו שוב מאוחר יותר.",
                 "sources": [],
             }
 
-        # חיפוש ב־Chroma
         results = collection.query(query_texts=[question], n_results=3)
+        print(f"🔍 Raw Chroma results: {results}")
+
         docs = results.get("documents", [[]])[0]
         metas = results.get("metadatas", [[]])[0]
 
-        if docs:
+        if not docs:
+            print("⚠️ No relevant results found.")
+            answer_text = "לא נמצא מידע רלוונטי במאגר."
+        else:
             combined = []
             for i, d in enumerate(docs):
                 url = metas[i].get("url", "לא ידוע")
@@ -182,14 +158,10 @@ async def query(request: Request):
                 combined.append(f"🔹 מקור: {url}\n{snippet}")
                 sources.append(url)
             answer_text = "\n\n".join(combined)
-        else:
-            answer_text = (
-                "לא נמצא מידע רלוונטי, מוזמנים לפנות לצוות שבתון במייל info@shabaton.co.il"
-            )
 
     except Exception as e:
-        print(f"⚠️ Error querying Chroma: {e}")
-        answer_text = "אירעה שגיאה בגישה למידע."
+        print(f"❌ Error querying Chroma: {e}")
+        answer_text = f"אירעה שגיאה בגישה למידע: {e}"
 
     # שליחת לוגים ל־Zapier (לא חובה)
     try:
