@@ -1,4 +1,4 @@
-# indexer.py — גרסה יציבה ל־Render (OpenAI 1.30.1 + Chroma 0.4.24)
+# indexer.py — גרסה מעודכנת ויציבה ל־Render (OpenAI 1.40.3 + Chroma 0.4.24)
 import os
 import json
 import hashlib
@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import chromadb
-from openai import OpenAI
+import openai  # ✅ שימוש נכון בגרסאות החדשות
 
 # ===============================
 #   הגדרות סביבה
@@ -39,7 +39,7 @@ os.makedirs(CHROMA_DIR, exist_ok=True)
 # ===============================
 #   חיבור ל־Chroma + OpenAI
 # ===============================
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+openai.api_key = OPENAI_API_KEY  # ✅ כך עובדים מהגרסה החדשה
 chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
 collection = chroma_client.get_or_create_collection("shabaton_faq")
 
@@ -47,12 +47,13 @@ collection = chroma_client.get_or_create_collection("shabaton_faq")
 #   Embeddings עם retry חכם
 # ===============================
 def embed_texts(texts, retries=3):
+    """יוצר embeddings עם retry מדורג"""
     all_embeddings = []
     for i in range(0, len(texts), 50):
         batch = texts[i:i + 50]
         for attempt in range(retries):
             try:
-                res = openai_client.embeddings.create(input=batch, model=EMBED_MODEL)
+                res = openai.embeddings.create(input=batch, model=EMBED_MODEL)
                 all_embeddings.extend([d.embedding for d in res.data])
                 time.sleep(0.8)
                 break
