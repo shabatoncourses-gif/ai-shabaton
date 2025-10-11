@@ -3,9 +3,7 @@ fastapi==0.115.2
 uvicorn==0.30.6
 
 # --- AI & Embeddings ---
-from openai import OpenAI
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
-
+openai==1.40.3
 chromadb==0.4.24
 
 # --- HTML parsing ---
@@ -22,4 +20,5 @@ python-dotenv==1.0.1
 
 # --- Compatibility ---
 numpy<2
+
 
