@@ -14,11 +14,10 @@ html5lib==1.1
 # --- Networking ---
 requests==2.32.3
 tqdm==4.66.4
+urllib3<3.0.0   # ✅ חשוב ליציבות עם requests
 
 # --- Utility ---
 python-dotenv==1.0.1
 
 # --- Compatibility ---
 numpy<2
-
-
